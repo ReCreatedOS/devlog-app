@@ -1,0 +1,634 @@
+@import 'tailwindcss';
+
+/* ── Plus Jakarta Sans ────────────────────────────────────────────────────────
+   Değişken (200–800) ve UYGULAMAYLA BİRLİKTE PAKETLENİR: dosyalar
+   `assets/fonts/` altında, Vite bunları same-origin bir URL'e gömüyor. Ağdan
+   çekmiyoruz — masaüstü uygulaması çevrimdışı da aynı yüzle açılmalı ve CSP
+   zaten `font-src 'self' data:` diyor.
+
+   Türkçe için `latin-ext` şart: ğ ş İ ı temel latin'de yok. */
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: block;
+  src: url('../assets/fonts/plus-jakarta-sans-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: block;
+  src: url('../assets/fonts/plus-jakarta-sans-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* Tasarım dili: Linear/Resend hattı, vermillion #FF5A1F,
+   4/6/8/10/12/16/20/24 radius ölçeği. */
+
+@theme {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface-1: var(--surface-1);
+  --color-card: var(--card);
+  --color-surface-2: var(--surface-2);
+  --color-popover: var(--popover);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-ring: var(--ring);
+
+  --color-destructive: var(--destructive);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-success: var(--success);
+
+  /* Severity — liste satırındaki nokta ve detay hapı bu beşliyi kullanır. */
+  --color-sev-critical: var(--sev-critical);
+  --color-sev-high: var(--sev-high);
+  --color-sev-medium: var(--sev-medium);
+  --color-sev-low: var(--sev-low);
+  --color-sev-info: var(--sev-info);
+
+  /* Plus Jakarta Sans: geometrik ama yumuşak, tek katlı `a` ve geniş sayı
+     genişlikleriyle Inter'in "jenerik SaaS" sesinden ayrışır. Paketlendiği için
+     her makinede aynı yüz. */
+  --font-sans: 'Plus Jakarta Sans', -apple-system, system-ui, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'Cascadia Mono', monospace;
+
+  /* Metin kademeleri — 9 keyfi alfa yerine üç ton. Temadan türer, her temada
+     doğru kontrastı verir. */
+  --color-ink: var(--foreground);
+  --color-ink-2: var(--muted-foreground);
+  --color-ink-3: color-mix(in srgb, var(--muted-foreground) 74%, var(--background));
+
+  /* Etkileşim tintleri — opak yüzey çalmak yerine mürekkepten türeyen üç kademe.
+     Sözleşme: tint-1 = hover (geçici), tint-2 = seçili (kalıcı), tint-3 = aktif. */
+  --color-tint-1: color-mix(in srgb, var(--foreground) 5%, transparent);
+  --color-tint-2: color-mix(in srgb, var(--foreground) 8%, transparent);
+  --color-tint-3: color-mix(in srgb, var(--foreground) 12%, transparent);
+
+  /* Süre = failin kim olduğu. Ben yaptıysam anında, sistem yaptıysa görülecek
+     kadar yavaş. */
+  --d-tap: 90ms;
+  --d-commit: 160ms;
+  --d-shell: 220ms;
+  --d-arrive: 900ms;
+  --ease-entry: cubic-bezier(0.2, 0.9, 0.28, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  --radius-2xs: 4px;
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+  --radius-3xl: 24px;
+
+  --ease-out-quint: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* ── Şema anlamları ───────────────────────────────────────────────────────────
+   Severity beşlisi ve durum renkleri TEMAYLA DEĞİŞMEZ: bu arayüzde renk
+   "aciliyet" demek. Tema yalnız nötr rampayı, kenarlığı ve gölgeyi değiştirir;
+   kritik kırmızısı tema değişince kaymaz, yoksa kullanıcının öğrendiği tek
+   sinyal bozulur. */
+
+:root,
+[data-theme='gun'],
+[data-theme='kagit'],
+[data-theme='ayaz'],
+[data-theme='adacayi'],
+[data-theme='gulkurusu'] {
+  --destructive: #eb5757;
+  --warning: #b7791f;
+  --info: #2f7fe0;
+  --success: #1f8a3b;
+
+  /* Beşi de yaklaşık aynı algısal parlaklıkta (oklch L≈.58): önceki sette
+     "orta" sarısı kritik kırmızısından DAHA parlaktı ve ekranda daha çok
+     bağırıyordu — sıralama gözle okunamıyordu. */
+  --sev-critical: #c62b38;
+  --sev-high: #b3571a;
+  --sev-medium: #8a6b00;
+  --sev-low: #1f6fd0;
+  --sev-info: #6b7280;
+
+  --primary-foreground: #ffffff;
+  --shadow-panel: 0 1px 2px rgb(15 23 42 / 0.06), 0 12px 28px -10px rgb(15 23 42 / 0.16);
+  --scrollbar-thumb: rgba(110, 110, 115, 0.32);
+}
+
+[data-theme='gece'],
+[data-theme='murekkep'],
+[data-theme='okyanus'],
+[data-theme='orman'],
+[data-theme='ametist'],
+[data-theme='sarap'],
+[data-theme='komur'],
+[data-theme='kontrast'] {
+  --destructive: #ff4d5e;
+  --warning: #fbbf24;
+  --info: #4ea7fc;
+  --success: #34d399;
+
+  /* oklch L≈.70 — beşi de kart yüzeyinde 6.4–7.1:1 arasında. */
+  --sev-critical: #fc6568;
+  --sev-high: #e87e34;
+  --sev-medium: #c59720;
+  --sev-low: #4ba6ec;
+  --sev-info: #9a9fa6;
+
+  --primary-foreground: #ffffff;
+  --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.3), 0 18px 40px -14px rgb(0 0 0 / 0.6);
+  --scrollbar-thumb: rgba(138, 143, 152, 0.32);
+}
+
+/* ── Nötr rampalar ────────────────────────────────────────────────────────────
+   Üç panel aynı düzlemde durmasın diye rampa BEŞ kademeli: background (en dip)
+   < surface-1 (raylar) < card (kayıt yüzeyi) < surface-2 (etkileşim) < popover
+   (üstte yüzen). */
+
+:root,
+[data-theme='gece'] {
+  --background: #08090a;
+  --foreground: #f2f3f4;
+  --surface-1: #0d0e10;
+  --card: #131416;
+  --surface-2: #1d1e21;
+  --popover: #26272b;
+  --muted: #1d1e21;
+  --muted-foreground: #8b9099;
+  --accent: #2b2c30;
+  --accent-foreground: #f2f3f4;
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.14);
+}
+
+[data-theme='murekkep'] {
+  --background: #070b14;
+  --foreground: #e7ecf6;
+  --surface-1: #0b1220;
+  --card: #101828;
+  --surface-2: #172034;
+  --popover: #1d2842;
+  --muted: #172034;
+  --muted-foreground: #8494b0;
+  --accent: #222d49;
+  --accent-foreground: #e7ecf6;
+  --border: rgba(148, 178, 235, 0.1);
+  --border-strong: rgba(148, 178, 235, 0.2);
+}
+
+[data-theme='komur'] {
+  --background: #0d0a08;
+  --foreground: #f6f1eb;
+  --surface-1: #17120e;
+  --card: #1f1813;
+  --surface-2: #2b211a;
+  --popover: #362a20;
+  --muted: #2b211a;
+  --muted-foreground: #ab9784;
+  --accent: #3d2f24;
+  --accent-foreground: #f6f1eb;
+  --border: rgba(240, 205, 165, 0.11);
+  --border-strong: rgba(240, 205, 165, 0.21);
+}
+
+[data-theme='okyanus'] {
+  --background: #04100f;
+  --foreground: #e4f4f2;
+  --surface-1: #071a19;
+  --card: #0b2422;
+  --surface-2: #113230;
+  --popover: #163e3c;
+  --muted: #113230;
+  --muted-foreground: #7fa8a4;
+  --accent: #17403d;
+  --accent-foreground: #e4f4f2;
+  --border: rgba(140, 225, 220, 0.11);
+  --border-strong: rgba(140, 225, 220, 0.22);
+}
+
+[data-theme='orman'] {
+  --background: #060d0a;
+  --foreground: #e8f3ec;
+  --surface-1: #0a1512;
+  --card: #0f1c18;
+  --surface-2: #16261f;
+  --popover: #1c3128;
+  --muted: #16261f;
+  --muted-foreground: #85a294;
+  --accent: #22382e;
+  --accent-foreground: #e8f3ec;
+  --border: rgba(150, 220, 180, 0.11);
+  --border-strong: rgba(150, 220, 180, 0.22);
+}
+
+[data-theme='ametist'] {
+  --background: #0b0813;
+  --foreground: #efe9f8;
+  --surface-1: #120e1e;
+  --card: #181329;
+  --surface-2: #221a37;
+  --popover: #2c2145;
+  --muted: #221a37;
+  --muted-foreground: #9d90b8;
+  --accent: #322546;
+  --accent-foreground: #efe9f8;
+  --border: rgba(190, 160, 240, 0.12);
+  --border-strong: rgba(190, 160, 240, 0.24);
+}
+
+[data-theme='sarap'] {
+  --background: #100609;
+  --foreground: #f7e9ee;
+  --surface-1: #1a0b10;
+  --card: #241017;
+  --surface-2: #33161f;
+  --popover: #3f1c27;
+  --muted: #33161f;
+  --muted-foreground: #b58e9b;
+  --accent: #45202c;
+  --accent-foreground: #f7e9ee;
+  --border: rgba(240, 170, 190, 0.12);
+  --border-strong: rgba(240, 170, 190, 0.24);
+}
+
+[data-theme='kontrast'] {
+  --background: #000000;
+  --foreground: #ffffff;
+  --surface-1: #0a0a0a;
+  --card: #141414;
+  --surface-2: #1f1f1f;
+  --popover: #262626;
+  --muted: #1f1f1f;
+  --muted-foreground: #a3a3a3;
+  --accent: #2e2e2e;
+  --accent-foreground: #ffffff;
+  --border: rgba(255, 255, 255, 0.22);
+  --border-strong: rgba(255, 255, 255, 0.4);
+}
+
+[data-theme='gun'] {
+  --background: #fbfbfc;
+  --foreground: #101114;
+  --surface-1: #f4f5f7;
+  --card: #ffffff;
+  --surface-2: #e9eaee;
+  --popover: #ffffff;
+  --muted: #e9eaee;
+  --muted-foreground: #62666e;
+  --accent: #e0e2e8;
+  --accent-foreground: #101114;
+  --border: rgba(15, 23, 42, 0.09);
+  --border-strong: rgba(15, 23, 42, 0.16);
+}
+
+[data-theme='ayaz'] {
+  --background: #f4f8fd;
+  --foreground: #0d1622;
+  --surface-1: #e9f0f9;
+  --card: #ffffff;
+  --surface-2: #dde8f5;
+  --popover: #ffffff;
+  --muted: #dde8f5;
+  --muted-foreground: #566579;
+  --accent: #d2e0f0;
+  --accent-foreground: #0d1622;
+  --border: rgba(20, 50, 90, 0.11);
+  --border-strong: rgba(20, 50, 90, 0.2);
+}
+
+[data-theme='adacayi'] {
+  --background: #f5f8f4;
+  --foreground: #10170f;
+  --surface-1: #eaf0e7;
+  --card: #ffffff;
+  --surface-2: #dde8d9;
+  --popover: #ffffff;
+  --muted: #dde8d9;
+  --muted-foreground: #5a6b56;
+  --accent: #d3e0cf;
+  --accent-foreground: #10170f;
+  --border: rgba(30, 60, 25, 0.11);
+  --border-strong: rgba(30, 60, 25, 0.2);
+}
+
+[data-theme='gulkurusu'] {
+  --background: #fdf6f5;
+  --foreground: #1f1414;
+  --surface-1: #f7e9e8;
+  --card: #ffffff;
+  --surface-2: #f3dedd;
+  --popover: #ffffff;
+  --muted: #f3dedd;
+  --muted-foreground: #6f5758;
+  --accent: #ecd0cf;
+  --accent-foreground: #1f1414;
+  --border: rgba(90, 35, 35, 0.11);
+  --border-strong: rgba(90, 35, 35, 0.2);
+}
+
+[data-theme='kagit'] {
+  --background: #faf7f1;
+  --foreground: #1c1917;
+  --surface-1: #f4efe6;
+  --card: #fffdf9;
+  --surface-2: #eae2d4;
+  --popover: #fffdf9;
+  --muted: #eae2d4;
+  --muted-foreground: #6f6559;
+  --accent: #e2d8c6;
+  --accent-foreground: #1c1917;
+  --border: rgba(68, 51, 30, 0.12);
+  --border-strong: rgba(68, 51, 30, 0.22);
+}
+
+/* ── Vurgu rengi ──────────────────────────────────────────────────────────────
+   Ayrı eksen: yalnız ETKİLEŞİMİ işaretler (seçim, odak, birincil düğme). */
+
+:root,
+[data-accent='vermilyon'] {
+  --primary: #ff5a1f;
+  --ring: #ff5a1f;
+}
+[data-accent='kehribar'] {
+  --primary: #f0a020;
+  --ring: #f0a020;
+}
+[data-accent='yesim'] {
+  --primary: #12b981;
+  --ring: #12b981;
+}
+[data-accent='gokyuzu'] {
+  --primary: #3b82f6;
+  --ring: #3b82f6;
+}
+[data-accent='menekse'] {
+  --primary: #8b5cf6;
+  --ring: #8b5cf6;
+}
+[data-accent='gul'] {
+  --primary: #f43f5e;
+  --ring: #f43f5e;
+}
+
+/* Açık temalarda vurgu üstündeki metin siyah olmalı — kehribar/yeşim üstünde
+   beyaz okunmuyor. */
+[data-theme='gun'][data-accent='kehribar'],
+[data-theme='kagit'][data-accent='kehribar'],
+[data-theme='ayaz'][data-accent='kehribar'],
+[data-theme='adacayi'][data-accent='kehribar'],
+[data-theme='gulkurusu'][data-accent='kehribar'] {
+  --primary-foreground: #1c1917;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    /* Masaüstü kabuğu: kaydırma panellerin içinde olur, belge kaymaz. */
+    overflow: hidden;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    font-optical-sizing: auto;
+    letter-spacing: -0.006em;
+  }
+
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.022em;
+  }
+
+  /* Uygulama kabuğunda metin seçimi kazara sürüklemeyi bozuyor; yalnız
+     içerik yüzeylerinde açıyoruz. */
+  .selectable {
+    user-select: text;
+    cursor: auto;
+  }
+
+  /* Seçim rengi AÇIKÇA tanımlanır — hem arkaplan hem metin.
+     Tanımlanmadığında macOS kendi vurgu rengini basıyor ve metni ters
+     çeviriyordu: koyu temada seçilen yazı okunmaz hâle geliyordu. Arkaplan
+     saydam değil, tema arkaplanıyla karıştırılmış bir ton; böylece üst üste
+     binen katmanlarda koyulaşıp metni yutmuyor. */
+  ::selection {
+    background-color: color-mix(in srgb, var(--primary) 30%, var(--background));
+    color: var(--foreground);
+  }
+
+  /* CodeMirror'ın kendi seçim/arkaplan kuralları buradan EZİLEMEZ: onlar
+     katmansız enjekte ediliyor ve katmansız bildirimler `@layer base`'i her
+     zaman yener. O yüzden editörün rengi `EntryEditor.tsx` içindeki
+     `EditorView.theme` bloğunda tanımlı. */
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+
+  button {
+    cursor: default;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 1px;
+  }
+}
+
+@utility drag-region {
+  -webkit-app-region: drag;
+}
+
+@utility no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Sayısal hizalama — saat sütunu ve sayaçlar zıplamasın. */
+@utility numeric {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── İki register ─────────────────────────────────────────────────────────────
+   Ekrandaki metnin bir kısmını insan yazdı (başlık, sıradaki adım, gövde),
+   kalanı makine egzozu (saat, tür kodu, sayaç, id, gün sayısı). İkisi aynı
+   sesle konuşunca ekran "veri tablosu" gibi okunuyordu; ayırınca defter gibi
+   okunuyor. */
+
+@utility t-machine {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+@utility t-title {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 500;
+  letter-spacing: -0.006em;
+}
+
+@utility t-head {
+  font-size: 17px;
+  line-height: 23px;
+  font-weight: 700;
+  letter-spacing: -0.021em;
+}
+
+/* Dokunulan her yüzey aynı gramerle tepki verir: parmağın altında anında,
+   çekilince yavaş. */
+@utility hit {
+  transition:
+    background-color var(--d-commit) var(--ease-exit),
+    color var(--d-commit) var(--ease-exit),
+    border-color var(--d-commit) var(--ease-exit);
+}
+
+.hit:hover,
+.hit:focus-visible {
+  transition-duration: var(--d-tap);
+  transition-timing-function: var(--ease-entry);
+}
+
+/* Durum değişince hap bir kare vurgu renginde yanar ve yeni tonuna oturur —
+   geri bildirim eylemin OLDUĞU yerde, ekranın altındaki bir şeritte değil. */
+@keyframes commit-flash {
+  0% {
+    background-color: var(--primary);
+    border-color: var(--primary);
+    color: var(--primary-foreground);
+  }
+  100% {
+    background-color: revert-layer;
+    border-color: revert-layer;
+    color: revert-layer;
+  }
+}
+
+.commit-flash {
+  animation: commit-flash var(--d-commit) var(--ease-entry);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .commit-flash {
+    animation: none;
+  }
+}
+
+/* Uppercase mikro-etiketler tek gramerle: üç ayrı tracking değeri (0.03/0.04/
+   0.05em) "her etiket ayrı ayrı, o an uydurularak yazıldı" hissi veriyordu. */
+@utility t-label {
+  font-size: 10px;
+  line-height: 14px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Kenar payı ile metin gövdesini ayıran oluk. Defterin dikey çizgisi: makine
+   olguları solunda, insan yazısı sağında kalır. */
+@utility gutter-rule {
+  border-left: 1px solid color-mix(in srgb, var(--foreground) 7%, transparent);
+}
+
+/* Yazı tipi bir tercih: paketlenmiş Jakarta ya da işletim sisteminin kendi
+   yüzü. İkisi de ölçüldü, ikisi de tam sette çalışıyor. */
+[data-font='sistem'] {
+  --font-sans: -apple-system, system-ui, 'Segoe UI Variable Text', 'Segoe UI', sans-serif;
+}
+
+/* ── Yüzey derinliği ──────────────────────────────────────────────────────────
+   Üç panel aynı düzlemde durunca arayüz "tek levha" gibi okunuyordu. Kabuk
+   (raylar, başlık çubuğu) bir kademe geride, kayıt yüzeyi önde. */
+
+@utility surface-chrome {
+  background:
+    linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--foreground) 2.5%, transparent),
+      transparent 120px
+    ),
+    var(--surface-1);
+}
+
+/* Başlık çubuğunda vurgu renginden çok hafif bir ısı — marka orada, satırlarda
+   değil. */
+@utility surface-header {
+  background:
+    radial-gradient(
+      120% 180% at 0% 0%,
+      color-mix(in srgb, var(--primary) 7%, transparent),
+      transparent 60%
+    ),
+    var(--surface-1);
+}
+
+/* Seçili satır: tint + vurgu renginden bir iç kenar. Marka rengi satırın
+   tamamını boyamaz, yalnız "buradasın" der. */
+@utility row-selected {
+  background-color: var(--color-tint-2);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--foreground) 6%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, var(--foreground) 6%, transparent);
+}
+
+/* Gün başlığı: metin bittiği yerden itibaren saç teli çizgi. Grupları
+   birbirinden ayıran şey boşluk değil, ölçü. */
+@utility day-rule {
+  background-image: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--foreground) 9%, transparent),
+    transparent
+  );
+}
+
+/* Kaydırma çubuğu yalnız kaydırırken belirsin — durağan ekranda gri bir çubuk
+   gürültüdür. */
+.scroll-quiet::-webkit-scrollbar-thumb {
+  background: transparent;
+  transition: background var(--d-shell) var(--ease-exit);
+}
+.scroll-quiet:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+}
+
+/* Odak halkası her yerde aynı: iki katman, vurgu rengi + zemin ayrımı. */
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--primary) 70%, transparent);
+  outline-offset: 1px;
+}

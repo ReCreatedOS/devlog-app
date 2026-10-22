@@ -1,0 +1,11 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# pnpm 10 varsayılan olarak postinstall script'lerini bloklar. Electron'un
+# binary indirmesi ve esbuild'in platform ikilisi bunlara bağlı.
+onlyBuiltDependencies:
+  - electron
+  - esbuild
+  - app-builder-bin
+  - dmg-license

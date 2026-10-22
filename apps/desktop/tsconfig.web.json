@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["vite/client"],
+    "paths": {
+      "@/*": ["./src/renderer/src/*"]
+    }
+  },
+  // `@devlog/core` kaynakları BİLEREK listelenmiyor: renderer yalnız
+  // node-bağımsız `@devlog/core/shared` yüzeyini kullanır ve TS onu import
+  // zincirinden çözer. Paketin tamamını include etmek node-only dosyaları
+  // (vault, sources) DOM projesine sokuyordu.
+  "include": ["src/renderer/src/**/*.ts", "src/renderer/src/**/*.tsx", "src/shared/**/*.ts"]
+}

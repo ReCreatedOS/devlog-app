@@ -1,0 +1,21 @@
+{
+  "name": "@devlog/mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "devlog-mcp": "./dist/devlog-mcp.mjs"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@devlog/core": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@types/node": "^24.10.1",
+    "esbuild": "^0.28.1",
+    "typescript": "^5.9.3",
+    "zod": "^4.4.3"
+  }
+}
