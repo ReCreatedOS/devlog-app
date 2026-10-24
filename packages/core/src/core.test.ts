@@ -605,13 +605,16 @@ describe('yazma yolu — veri kaybı ve görünmez kayıt korumaları', () => {
 })
 
 describe('redact — ek desenler', () => {
+  // Sahte sırlar parçalardan birleştirilir: kaynakta düz yazılırsa GitHub secret
+  // scanning ve benzeri tarayıcılar onları gerçek anahtar sanıp alarm üretir.
+  const fake = (...parts: string[]): string => parts.join('')
   it.each([
-    ['sonu kesilmiş PEM', '-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC'],
-    ['yeni OpenAI anahtarı', 'sk-proj-Ab_cd-EfGhIjKlMnOpQrStUvWxYz0123456789'],
+    ['sonu kesilmiş PEM', fake('-----BEGIN ', 'PRIVATE KEY-----\n', 'MIIEvQIBADANBgkqhkiG9w0BAQEFAASC')],
+    ['yeni OpenAI anahtarı', fake('sk-', 'proj-', 'Ab_cd-EfGhIjKlMnOpQrStUvWxYz0123456789')],
     ['küçük harfli env', 'db_password=hunter2hunter2'],
     ['JSON alanı', '{"password": "hunter2hunter2"}'],
     ['Bearer', 'Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345'],
-    ['Google', 'AIzaSyA1234567890abcdefghijklmnopqrstuv'],
+    ['Google', fake('AI', 'za', 'SyA1234567890abcdefghijklmnopqrstuv')],
   ])('%s maskelenir', (_label, input) => {
     expect(redact(input).found.length).toBeGreaterThan(0)
   })
