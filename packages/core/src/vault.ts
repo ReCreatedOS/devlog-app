@@ -6,11 +6,23 @@ import { redact } from './redact.js'
 import { coerceFrontmatter, validateFrontmatter } from './schema.js'
 import { TAXONOMY_YAML } from './taxonomy.js'
 import { ENTRY_TYPES, SEVERITIES, STATUSES } from './types.js'
-import type { Entry, EntryDraft, EntryFrontmatter } from './types.js'
+import type { Entry, EntryDraft, EntryFrontmatter, SourceInfo } from './types.js'
 
 export interface ReadOptions {
   sourceId: string
   readOnly: boolean
+  /** Takım kaynağında benim yazar adım; başkasının kaydı salt-okunur okunur. */
+  owner?: string
+}
+
+/** Bir kaynaktan okurken kullanılacak seçenekler — tek yerden. */
+export function entryOptions(source: SourceInfo): ReadOptions {
+  return { sourceId: source.id, readOnly: source.readOnly, owner: source.owner }
+}
+
+function originFor(value: EntryFrontmatter, options: ReadOptions): ReadOptions {
+  const foreign = options.owner !== undefined && value.author !== options.owner
+  return { ...options, readOnly: options.readOnly || foreign }
 }
 
 export interface ReadFailure {
@@ -26,7 +38,7 @@ export async function readEntryFile(absPath: string, options: ReadOptions): Prom
   const { data, body } = parseDocument(raw)
   const result = validateFrontmatter(data)
   if (result.ok && result.value) {
-    return { ok: true, entry: toEntry(result.value, body, absPath, options) }
+    return { ok: true, entry: toEntry(result.value, body, absPath, originFor(result.value, options)) }
   }
 
   // Katı doğrulama düştüyse, yalnız tanınmayan enum değerleri yüzünden mi
@@ -37,7 +49,10 @@ export async function readEntryFile(absPath: string, options: ReadOptions): Prom
   if (lenient) {
     return {
       ok: true,
-      entry: toEntry(lenient.value, body, absPath, { ...options, coerced: lenient.coerced }),
+      entry: toEntry(lenient.value, body, absPath, {
+        ...originFor(lenient.value, options),
+        coerced: lenient.coerced,
+      }),
     }
   }
   return { ok: false, failure: { path: absPath, errors: result.errors } }
@@ -171,7 +186,11 @@ async function freeEntryId(vaultRoot: string, base: string): Promise<string> {
   return `${base}-${Date.now()}`
 }
 
-export async function createEntry(vaultRoot: string, draft: EntryDraft): Promise<Entry> {
+export async function createEntry(
+  vaultRoot: string,
+  draft: EntryDraft,
+  sourceId = 'vault',
+): Promise<Entry> {
   // Yalnız CLI/MCP kullanan biri masaüstünü hiç açmayabilir; ajan rehberi
   // (CLAUDE.md/AGENTS.md) ve taxonomy.yaml ilk yazımda yine de yerinde olsun.
   await ensureVault(vaultRoot)
@@ -180,7 +199,13 @@ export async function createEntry(vaultRoot: string, draft: EntryDraft): Promise
   const frontmatter: EntryFrontmatter = {
     // Başlık da sır taşıyabilir (`TOKEN=… npx wrangler deploy` gibi bir deploy
     // komutu başlık olur) ve id/dosya adına da oradan geçer — önce maskele.
-    id: await freeEntryId(vaultRoot, makeEntryId(occurred, redact(draft.title).text)),
+    // Takımda yazar adı id'ye girer: iki kişi çevrimdışıyken aynı dakikada aynı
+    // başlıkla kayıt açarsa `freeEntryId` bunu göremez (öbürünün dosyası henüz
+    // gelmedi) ve eşitlemede iki farklı içerik aynı yola düşerdi.
+    id: await freeEntryId(
+      vaultRoot,
+      makeEntryId(occurred, [draft.author, redact(draft.title).text].filter(Boolean).join(' ')),
+    ),
     title: redact(draft.title).text,
     type: draft.type,
     severity: draft.severity,
@@ -188,13 +213,14 @@ export async function createEntry(vaultRoot: string, draft: EntryDraft): Promise
     occurred_at: draft.occurred_at ?? localIso(occurred),
     created_at: now,
     updated_at: now,
+    author: draft.author,
     project: draft.project,
     area: draft.area,
     tags: draft.tags,
     refs: draft.refs,
   }
   const absPath = await writeEntry(vaultRoot, frontmatter, draft.body)
-  return toEntry(frontmatter, draft.body, absPath, { sourceId: 'vault', readOnly: false })
+  return toEntry(frontmatter, draft.body, absPath, { sourceId, readOnly: false })
 }
 
 export async function deleteEntryFile(absPath: string): Promise<void> {
@@ -279,6 +305,11 @@ Geçmiş tutulmaz: vault bir git deposu, "ne zaman değişti" sorusunun cevabı
 4. **Sır yazma.** Token, anahtar, \`.env\` içeriği, imzalı URL buraya girmez.
 5. Uygulamaya bağlı salt-okunur aynalara (ör. Claude memory) **yazma** — onlar
    başka bir aracın dosyaları.
+6. **Takım vault'unda** (frontmatter'da \`author\` olan kayıtlar) yalnız kendi
+   kayıtlarını düzenle. Başkasının kaydına ek yapmak istiyorsan kendi kaydını
+   aç ve gövdede \`[[onun-id-si]]\` ile bağla — iki kişi asla aynı dosyaya
+   yazmaz, eşitleme bu sayede hiç çakışmaz. Takım deposuna giden her şeyi ekip
+   görür: güvenlik bulgusu, prod referansı, müşteri verisi buraya girmez.
 `
 
 /** Vault yoksa kurar; varsa eksik dosyaları tamamlar. Var olanı asla ezmez. */

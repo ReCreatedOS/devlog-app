@@ -172,6 +172,8 @@ echo "Fix deployed, monitoring." | devlog append <id> --body -
 devlog status <id> monitoring --next "Check error rate on Friday" --review 2026-11-01
 devlog timeline --day 2026-10-22
 devlog doctor                             # config, vault, hooks: what is wrong?
+devlog team add --remote URL --author me  # join a team feed (see below)
+devlog sync                               # sync team feeds now
 ```
 
 Every read command accepts `--json`. Run `devlog help` for the full reference.
@@ -180,6 +182,49 @@ Every read command accepts `--json`. Run `devlog help` for the full reference.
 `decision` · `deploy` · `commit` · `meeting` · `note`
 **Severities** (required for incident/security): `critical` · `high` · `medium` · `low` · `info`
 **Statuses:** `open` · `in-progress` · `blocked` · `verified` · `monitoring` · `fixed` · `done` · `wontfix`
+
+---
+
+## Team feed (GitHub, no server)
+
+Working on something with a team? Each team is a **private GitHub repository**.
+Everyone's devlog clones it and the entries merge into one live feed next to
+your own. There is no server or webhook; it all runs on plain git.
+
+**Join:** Settings → **Takım** → paste the repo URL, pick your author name →
+*Katıl*. Or from the CLI:
+
+```bash
+gh repo create my-org/devlog-team --private      # one person, once
+devlog team add --remote https://github.com/my-org/devlog-team.git \
+       --author alice --repo my-org/api          # everyone
+```
+
+You need read/write access to the repo, and git must be able to reach GitHub
+without prompting (`gh auth login && gh auth setup-git`).
+
+**Writing to the team is always explicit:** `devlog new … --team team`, `+team`
+in quick capture (the preview shows the target), or `team` in `devlog_create`.
+Without it, an entry stays in your personal vault, and that vault is never
+pushed. `--repo` routes commit/deploy hook entries from those code repos to the
+team. Session summaries carry your prompts, so they never go to a team.
+
+**Why it never conflicts:** each person writes only their own files. The author
+is in both the entry id and the frontmatter. Teammates' entries are read-only
+for you: to add to one, write your own entry and link it with `[[id]]`. You can
+still track its status, but that goes to your personal tracking file. Since no
+two people ever touch the same path, every rebase is clean.
+
+**Sync** commits your own pending files, then fetches, rebases and pushes
+(retrying on rejection). The app syncs on start, every 30 s, on window focus and
+right after you write. The CLI and hooks push from a detached background
+process. The MCP server refreshes the feed before a search if it is older than
+60 s. A push that fails while offline goes out on the next sync.
+
+**Secret gate:** every file headed for a team repo is scanned first. A file
+containing a secret is **not pushed**, and the app and CLI tell you which one.
+It is blocked rather than masked, because what reaches GitHub can't be taken
+back.
 
 ---
 

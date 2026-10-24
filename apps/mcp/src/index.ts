@@ -4,16 +4,21 @@ import {
   ENTRY_TYPES,
   SEVERITIES,
   STATUSES,
-  createEntry,
+  activeTeams,
+  createRoutedEntry,
+  loadConfig,
   localDayKey,
   localIso,
   openIndex,
   redact,
+  syncIfStale,
+  syncTeam,
+  teamOfEntry,
   trackEntry,
   trackingState,
   writeEntry,
 } from '@devlog/core'
-import type { Entry, EntrySummary, MiniSearchIndex, QueryFilter } from '@devlog/core'
+import type { DevlogConfig, Entry, EntrySummary, MiniSearchIndex, QueryFilter } from '@devlog/core'
 import { z } from 'zod'
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -27,19 +32,43 @@ const DAY_RE = /^\d{4}-\d{2}-\d{2}$/
  */
 
 const CACHE_TTL_MS = 2_000
-let cache: { at: number; index: MiniSearchIndex; vaultRoot: string } | null = null
+/** Takım feed'i bundan eskiyse aramadan önce eşitlenir… */
+const TEAM_FRESH_MS = 60_000
+/** …ama ağ yavaşsa arama en fazla bu kadar bekler. */
+const TEAM_SYNC_BUDGET_MS = 4_000
+let cache: { at: number; index: MiniSearchIndex; vaultRoot: string; config: DevlogConfig } | null = null
 
 /**
  * İndeks süreç başına bir kez değil, kısa TTL'le tazelenir. Sebep: masaüstü
  * uygulaması ve hook'lar aynı vault'a yazıyor; uzun ömürlü bir sunucuda tek
  * seferlik okuma, sonradan eklenen kayıtları görünmez yapardı.
  */
-async function getIndex(): Promise<{ index: MiniSearchIndex; vaultRoot: string }> {
+async function getIndex(): Promise<{ index: MiniSearchIndex; vaultRoot: string; config: DevlogConfig }> {
   const now = Date.now()
   if (cache && now - cache.at < CACHE_TTL_MS) return cache
-  const { index, config } = await openIndex()
-  cache = { at: now, index, vaultRoot: config.vaultRoot }
+  const loaded = await loadConfig()
+  // Ajan "takım bugün ne yaptı" diye sorduğunda bayat bir klona bakmasın.
+  await Promise.all(activeTeams(loaded).map((team) => syncIfStale(team, TEAM_FRESH_MS, TEAM_SYNC_BUDGET_MS)))
+  const { index, config } = await openIndex(loaded)
+  cache = { at: now, index, vaultRoot: config.vaultRoot, config }
   return cache
+}
+
+/**
+ * Takım kaydına yazıldıysa it. Sunucu uzun ömürlü: süreç içinde, beklemeden.
+ * Başka bir eşitleme sürüyorsa onun bitmesini bekler ki yeni dosya kaçmasın.
+ */
+function pushIfTeam(config: DevlogConfig, entry: Pick<Entry, 'sourceId'>): void {
+  const team = teamOfEntry(config, entry)
+  if (!team) return
+  void syncTeam(team, { wait: 60_000 })
+    .then((result) => {
+      if (result.error) process.stderr.write(`[devlog-mcp] ${team.id} eşitleme: ${result.error}\n`)
+      for (const item of result.blocked) {
+        process.stderr.write(`[devlog-mcp] ${team.id}: sır yüzünden itilmedi → ${item.path}\n`)
+      }
+    })
+    .catch(() => undefined)
 }
 
 function invalidate(): void {
@@ -58,6 +87,7 @@ function toJson(entry: EntrySummary): Record<string, unknown> {
     project: entry.project,
     tags: entry.tags,
     source: entry.sourceId,
+    author: entry.author,
     read_only: entry.readOnly,
     // Ayna kayıtlarında bu alanlar metinden ÇIKARILMIŞTIR, dosyada yazmaz.
     derived: entry.derived,
@@ -90,6 +120,10 @@ const filterShape = {
   status: z.array(z.enum(STATUSES)).optional(),
   severity: z.array(z.enum(SEVERITIES)).optional(),
   tag: z.array(z.string()).optional(),
+  source: z
+    .array(z.string())
+    .optional()
+    .describe('Kaynak: `vault` (kişisel), `team:<id>` (takım feed\'i), `claude-memory:…`'),
   stale: z
     .boolean()
     .optional()
@@ -104,6 +138,7 @@ type FilterArgs = {
   status?: readonly string[]
   severity?: readonly string[]
   tag?: string[]
+  source?: string[]
   stale?: boolean
   limit?: number
 }
@@ -117,6 +152,7 @@ function buildFilter(args: FilterArgs, query?: string): QueryFilter {
     statuses: args.status as QueryFilter['statuses'],
     severities: args.severity as QueryFilter['severities'],
     tags: args.tag,
+    sources: args.source,
     stale: args.stale,
     sort: 'newest',
   }
@@ -124,6 +160,12 @@ function buildFilter(args: FilterArgs, query?: string): QueryFilter {
 
 /** Salt-okunur aynadaki kayıtlar değiştirilemez — onlar başka bir aracın dosyaları. */
 function assertWritable(entry: Entry): void {
+  if (entry.readOnly && entry.sourceId.startsWith('team:')) {
+    throw new Error(
+      `Bu takım kaydı ${entry.author ?? 'başkasına'} ait; başkasının dosyası düzenlenmez. ` +
+        `Kendi kaydını aç (devlog_create, aynı team) ve gövdede [[${entry.id}]] ile bağla.`,
+    )
+  }
   if (entry.readOnly) {
     throw new Error(
       `Bu kayıt salt-okunur bir aynadan geliyor (${entry.sourceId}). ` +
@@ -131,6 +173,13 @@ function assertWritable(entry: Entry): void {
     )
   }
 }
+
+// Açılışta bilinen takımlar — yalnız araç açıklamasını zenginleştirmek için;
+// doğrulama her çağrıda güncel config'le yapılır.
+const startupTeams = activeTeams(await loadConfig().catch(() => ({ teams: [] }) as unknown as DevlogConfig))
+const teamHint = startupTeams.length
+  ? ` Tanımlı takımlar: ${startupTeams.map((team) => `\`${team.id}\` (${team.label})`).join(', ')}.`
+  : ' Şu an tanımlı takım yok.'
 
 const server = new McpServer({ name: 'devlog', version: '0.1.0' })
 
@@ -140,9 +189,10 @@ server.registerTool(
     title: 'Seyir defterinde ara',
     description:
       'Ürün geliştirme seyir defterinde tam metin + filtre araması yapar. Türkçe diakritik ' +
-      'katlamalıdır ("sokum" araması "söküm"ü bulur). Yazılabilir vault ve salt-okunur ' +
-      'aynaları (Claude memory) birlikte tarar. "Temmuzda CDN tarafında ne oldu" gibi ' +
-      'sorularda ilk başvurulacak araç.',
+      'katlamalıdır ("sokum" araması "söküm"ü bulur). Kişisel vault\'u, takım feed\'lerini ' +
+      've salt-okunur aynaları (Claude memory) birlikte tarar; takım feed\'i aramadan önce ' +
+      'GitHub\'dan tazelenir. "Temmuzda CDN tarafında ne oldu", "ekip bugün ne yaptı" ' +
+      '(source: team:<id>) gibi sorularda ilk başvurulacak araç.',
     inputSchema: { query: z.string().optional().describe('Serbest metin'), ...filterShape },
   },
   async (args) => {
@@ -196,29 +246,50 @@ server.registerTool(
       commits: z.array(z.string()).optional(),
       files: z.array(z.string()).optional(),
       links: z.array(z.string()).optional().describe('İlgili kayıt id\'leri'),
+      team: z
+        .string()
+        .optional()
+        .describe(
+          'Takım id\'si: kayıt ekibin ortak feed\'ine (GitHub) gider ve ekip arkadaşları görür. ' +
+            'Verilmezse kayıt KİŞİSEL kalır. Yalnız kullanıcı takımla paylaşmak istediğinde ya da ' +
+            'iş açıkça o takımın ortak işiyse ver; güvenlik bulgusu, prod referansı, müşteri verisi ' +
+            'gibi şeyleri takıma YAZMA.' + teamHint,
+        ),
     },
     annotations: { destructiveHint: false, idempotentHint: false },
   },
   async (args) => {
-    const { vaultRoot } = await getIndex()
+    const { config } = await getIndex()
     const masked = redact(args.body)
     const severity =
       args.severity ?? (args.type === 'incident' || args.type === 'security' ? 'medium' : undefined)
 
-    const entry = await createEntry(vaultRoot, {
-      title: args.title,
-      type: args.type,
-      body: masked.text,
-      severity,
-      status: args.status,
-      area: args.area,
-      project: args.project,
-      tags: args.tags,
-      occurred_at: args.occurred_at,
-      refs: { commits: args.commits, files: args.files, links: args.links },
-    })
+    let routed: Awaited<ReturnType<typeof createRoutedEntry>>
+    try {
+      routed = await createRoutedEntry(config, {
+        team: args.team,
+        title: args.title,
+        type: args.type,
+        body: masked.text,
+        severity,
+        status: args.status,
+        area: args.area,
+        project: args.project,
+        tags: args.tags,
+        occurred_at: args.occurred_at,
+        refs: { commits: args.commits, files: args.files, links: args.links },
+      })
+    } catch (error) {
+      return errorText(error instanceof Error ? error.message : String(error))
+    }
     invalidate()
-    return text({ id: entry.id, path: entry.path, redacted: masked.found })
+    pushIfTeam(config, routed.entry)
+    return text({
+      id: routed.entry.id,
+      path: routed.entry.path,
+      team: routed.team?.id,
+      redacted: masked.found,
+    })
   },
 )
 
@@ -232,7 +303,7 @@ server.registerTool(
     inputSchema: { id: z.string(), text: z.string().describe('Eklenecek markdown') },
   },
   async ({ id, text: addition }) => {
-    const { index, vaultRoot } = await getIndex()
+    const { index, vaultRoot, config } = await getIndex()
     const entry = index.get(id)
     if (!entry) return errorText(`Kayıt bulunamadı: ${id}`)
     try {
@@ -250,6 +321,7 @@ server.registerTool(
       entry.path,
     )
     invalidate()
+    pushIfTeam(config, entry)
     return text({ id, path: written, redacted: masked.found })
   },
 )
@@ -281,7 +353,7 @@ server.registerTool(
     },
   },
   async ({ id, status, next_action, next_review, note, status_since }) => {
-    const { index, vaultRoot } = await getIndex()
+    const { index, vaultRoot, config } = await getIndex()
     const entry = index.get(id)
     if (!entry) return errorText(`Kayıt bulunamadı: ${id}`)
 
@@ -298,6 +370,8 @@ server.registerTool(
       'agent',
     )
     invalidate()
+    // Başkasının takım kaydını izlemek kişisel takip dosyasına yazar; takıma gitmez.
+    if (outcome.target === 'entry') pushIfTeam(config, entry)
     return text({
       id,
       status: status ?? entry.status,

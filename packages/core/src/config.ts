@@ -22,6 +22,34 @@ export interface DevlogConfig {
   ui?: UiConfig
   /** Bayatlık eşikleri; ajan ve insan aynı şeye "bayat" desin diye burada. */
   tracking?: { staleAfterDays?: Partial<Record<EntryStatus, number>> }
+  /** Takım vault'ları — her biri ayrı, private bir GitHub reposunun klonu. */
+  teams?: TeamConfig[]
+}
+
+/**
+ * Takım vault'u: ekibin ortak feed'i.
+ *
+ * Kişisel vault BİLİNÇLİ olarak remote'suz (canlı güvenlik bulguları taşıyor);
+ * takım feed'i onu paylaşmak yerine yanına ayrı bir depo olarak eklenir. Sunucu
+ * yok: taşıyıcı GitHub, eşitleme düz `git fetch/rebase/push`.
+ */
+export interface TeamConfig {
+  /** Kısa, dosya adına uygun kimlik (`ekip`). Kaynak id'si `team:<id>` olur. */
+  id: string
+  label: string
+  /** Yerel klonun yolu. */
+  root: string
+  /** Bilgi amaçlı; klonun kendi `origin`'i esastır. */
+  remote?: string
+  /** Bu takımda BENİM yazar adım — kayıtlara `author` olarak yazılır. */
+  author: string
+  /**
+   * Commit/deploy kayıtları bu kod depolarından geliyorsa takıma gider.
+   * Değer: depo adı (`maestro`), mutlak yol ya da `sahip/depo`.
+   * Oturum özetleri HİÇBİR koşulda takıma gitmez — promptlarını taşırlar.
+   */
+  repos?: string[]
+  enabled?: boolean
 }
 
 export interface UiConfig {
@@ -95,6 +123,31 @@ function isSourceInfo(value: unknown): value is SourceInfo {
     typeof v.readOnly === 'boolean' &&
     (v.dialect === 'devlog' || v.dialect === 'claude-memory')
   )
+}
+
+/** `ekip`, `mobil-ekip` — dosya adına ve git dal adına güvenle girer. */
+export const TEAM_ID_RE = /^[a-z0-9][a-z0-9-]{0,39}$/
+
+function parseTeams(value: unknown): TeamConfig[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const teams: TeamConfig[] = []
+  for (const raw of value) {
+    const v = asRecord(raw)
+    if (typeof v.id !== 'string' || !TEAM_ID_RE.test(v.id)) continue
+    if (typeof v.root !== 'string' || !v.root.trim()) continue
+    if (typeof v.author !== 'string' || !v.author.trim()) continue
+    if (teams.some((team) => team.id === v.id)) continue
+    teams.push({
+      id: v.id,
+      label: typeof v.label === 'string' && v.label.trim() ? v.label.trim() : v.id,
+      root: expandHome(v.root),
+      remote: typeof v.remote === 'string' ? v.remote : undefined,
+      author: v.author.trim(),
+      repos: Array.isArray(v.repos) ? v.repos.filter((r): r is string => typeof r === 'string') : undefined,
+      enabled: typeof v.enabled === 'boolean' ? v.enabled : undefined,
+    })
+  }
+  return teams.length > 0 ? teams : undefined
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -198,6 +251,7 @@ export async function loadConfig(): Promise<DevlogConfig> {
     hotkey: typeof stored.hotkey === 'string' ? stored.hotkey : undefined,
     ui: parseUi(stored.ui),
     tracking: parseTracking(stored.tracking),
+    teams: parseTeams(stored.teams),
   }
 }
 
@@ -223,6 +277,25 @@ export async function saveConfig(config: DevlogConfig): Promise<void> {
   }
   await fs.mkdir(path.dirname(target), { recursive: true })
   await fs.writeFile(target, `${JSON.stringify(merged, null, 2)}\n`, 'utf8')
+}
+
+/** Takım kaynağı: yazılabilir, ama yalnız `author`'ı ben olan kayıtlar. */
+export function teamSource(team: TeamConfig): SourceInfo {
+  return {
+    id: `team:${team.id}`,
+    label: team.label,
+    root: team.root,
+    readOnly: false,
+    dialect: 'devlog',
+    owner: team.author,
+    team: team.id,
+    enabled: team.enabled,
+  }
+}
+
+/** Açık takımlar. */
+export function activeTeams(config: DevlogConfig): TeamConfig[] {
+  return (config.teams ?? []).filter((team) => team.enabled !== false)
 }
 
 /** Yazılabilir vault her zaman kaynak listesinin başında durur. */

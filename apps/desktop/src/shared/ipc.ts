@@ -41,6 +41,41 @@ export interface AppSettings {
   staleAfterDays: Partial<Record<EntryStatus, number>>
   vaultRoot: string
   sources: Array<SourceInfo & { count: number }>
+  teams: TeamStatus[]
+  /** Yazar adı boş bırakılırsa kullanılacak olan (işletim sistemi kullanıcısı). */
+  defaultAuthor: string
+}
+
+export interface JoinTeamRequest {
+  remote: string
+  author?: string
+  label?: string
+}
+
+export type TeamActionOutcome =
+  | { ok: true; settings: AppSettings }
+  | { ok: false; message: string }
+
+/** Bir takım feed'inin eşitleme durumu — kenar çubuğu bunu gösterir. */
+export interface TeamStatus {
+  id: string
+  label: string
+  /** Bu takımda benim yazar adım. */
+  author: string
+  root: string
+  enabled: boolean
+  /** Şu an eşitleniyor mu. */
+  syncing: boolean
+  /** Son eşitlemenin sonucu; hiç eşitlenmediyse yok. */
+  lastSync?: {
+    at: string
+    ok: boolean
+    error?: string
+    /** Sır yüzünden itilmeyen dosyalar. */
+    blocked: Array<{ path: string; found: string[] }>
+    /** Henüz itilmemiş yerel commit var mı (çevrimdışı vb.). */
+    pending: boolean
+  }
 }
 
 export interface LibraryStatus {
@@ -57,6 +92,8 @@ export interface LibraryStatus {
   orphanTracking: string[]
   /** Aynı id'yi iki kaynakta gören kayıtlar — biri sessizce düşürüldü. */
   collisions: string[]
+  /** Takım feed'leri — boşsa uygulama tek kişilik çalışır. */
+  teams: TeamStatus[]
 }
 
 export interface EntryDetail {
@@ -88,6 +125,10 @@ export const CHANNELS = {
   openExternal: 'devlog:open-external',
   changed: 'devlog:changed',
   statusChanged: 'devlog:status-changed',
+  sync: 'devlog:sync',
+  joinTeam: 'devlog:join-team',
+  leaveTeam: 'devlog:leave-team',
+  arrived: 'devlog:arrived',
   focusEntry: 'devlog:focus-entry',
   newEntry: 'devlog:new-entry',
   captureSubmit: 'capture:submit',
@@ -126,6 +167,14 @@ export interface DevlogApi {
   /** Dönüş değeri aboneliği iptal eder. */
   onChanged(callback: (id?: string) => void): () => void
   onStatusChanged(callback: () => void): () => void
+  /** Takım feed'lerini şimdi eşitle (kenar çubuğundaki düğme, pencereye dönüş). */
+  sync(): Promise<void>
+  /** Takım deposunu klonlar, config'e ekler ve ilk eşitlemeyi yapar. */
+  joinTeam(request: JoinTeamRequest): Promise<TeamActionOutcome>
+  /** Takımı config'ten çıkarır; klon diskte kalır. */
+  leaveTeam(id: string): Promise<TeamActionOutcome>
+  /** Takım arkadaşlarından yeni kayıtlar geldi — id'leri. */
+  onArrived(callback: (ids: string[]) => void): () => void
   /** Hızlı yakalamadan ya da menüden bir kayda odaklanma isteği geldi. */
   onFocusEntry(callback: (id: string) => void): () => void
   /** Menüden "Yeni kayıt" seçildi. */

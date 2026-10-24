@@ -56,6 +56,12 @@ export interface EntryFrontmatter {
   occurred_at: string
   created_at: string
   updated_at?: string
+  /**
+   * Takım vault'larında kaydı kimin yazdığı. Her kişi yalnız KENDİ kayıtlarını
+   * yazar; böylece iki kişi aynı dosyaya hiç dokunmaz ve git eşitlemesi asla
+   * içerik çakışmasına düşmez. Kişisel vault'ta boş kalır.
+   */
+  author?: string
   project?: string
   area?: string
   tags?: string[]
@@ -81,6 +87,15 @@ export interface SourceInfo {
   readOnly: boolean
   /** Ayrıştırma lehçesi. `devlog` = bizim şemamız, diğerleri adaptörden gelir. */
   dialect: 'devlog' | 'claude-memory'
+  /**
+   * Takım kaynaklarında BENİM yazar adım. Kaynak yazılabilir olsa da `author`'ı
+   * bu olmayan kayıtlar salt-okunur okunur — başkasının dosyasını düzenlemek
+   * eşitlemede çakışma üretirdi. Durumunu ise yine de kendi takip dosyanla
+   * izleyebilirsin (kişisel vault'a yazılır, takıma gitmez).
+   */
+  owner?: string
+  /** Takım kaynağıysa takımın id'si — eşitleme ve yönlendirme bunun üstünden. */
+  team?: string
   /**
    * Kapalı kaynak taranmaz. Alan yoksa AÇIK sayılır — eski config dosyaları
    * bir anda tüm kaynaklarını kaybetmesin.
@@ -157,6 +172,13 @@ export interface EntryDraft {
   title: string
   type: EntryType
   body: string
+  /**
+   * Hedef takım id'si. Dosyaya YAZILMAZ — yalnız yönlendirmedir
+   * (`createRoutedEntry`). Verilmezse kayıt kişisel vault'a düşer.
+   */
+  team?: string
+  /** Takım kaydında yazar; `createRoutedEntry` takım ayarından doldurur. */
+  author?: string
   severity?: Severity
   status?: EntryStatus
   occurred_at?: string

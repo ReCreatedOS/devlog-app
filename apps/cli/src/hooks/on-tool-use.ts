@@ -1,6 +1,17 @@
 import path from 'node:path'
-import { createEntry, loadConfig, localIso, redact, writeEntry } from '@devlog/core'
-import type { EntryDraft } from '@devlog/core'
+import { fileURLToPath } from 'node:url'
+import {
+  createRoutedEntry,
+  isTeamClone,
+  loadConfig,
+  localIso,
+  redact,
+  spawnBackgroundSync,
+  teamForRepo,
+  teamOfEntry,
+  writeEntry,
+} from '@devlog/core'
+import type { DevlogConfig, Entry, EntryDraft } from '@devlog/core'
 import {
   alreadyLogged,
   findLogged,
@@ -76,6 +87,33 @@ function bashOutput(response: unknown): string {
   return ''
 }
 
+/**
+ * Takım kaydıysa eşitlemeyi kopuk bir sürece bırak — hook ağ beklemez.
+ * `devlog.mjs` bu hook'la aynı `dist/` dizininde derleniyor.
+ */
+function syncIfTeam(config: DevlogConfig, entry: Pick<Entry, 'sourceId'>): void {
+  const team = teamOfEntry(config, entry)
+  if (!team) return
+  spawnBackgroundSync(fileURLToPath(new URL('./devlog.mjs', import.meta.url)), team.id)
+  note(`takıma gidiyor: ${team.id}`)
+}
+
+/**
+ * Bu kod deposu bir takıma eşlenmişse kayıt oraya gider. Eşleme yalnız
+ * commit/deploy içindir; oturum özetleri promptları taşıdığı için asla.
+ */
+async function routeDraft(config: DevlogConfig, repoRoot: string | undefined, draft: EntryDraft): Promise<EntryDraft> {
+  if (!repoRoot) return draft
+  const team = await teamForRepo(config, repoRoot)
+  if (!team) return draft
+  // Klon yoksa commit kaydını kaybetmek yerine kişisel vault'a düş.
+  if (!(await isTeamClone(team))) {
+    note(`takım klonu yok (${team.root}); kayıt kişisel vault'a yazıldı`)
+    return draft
+  }
+  return { ...draft, team: team.id }
+}
+
 /** Commit bu kadar saniyeden eskiyse komut yeni bir commit üretmemiştir. */
 const FRESH_COMMIT_SECONDS = 120
 
@@ -149,11 +187,13 @@ async function logCommit(cwd: string, amend: boolean): Promise<void> {
       previous.path,
     )
     note(`amend: ${previous.id} güncellendi → ${shortSha}`)
+    syncIfTeam(config, previous)
     return
   }
 
-  const entry = await createEntry(config.vaultRoot, draft)
+  const { entry } = await createRoutedEntry(config, await routeDraft(config, repo?.root, draft))
   note(`commit kaydedildi: ${shortSha} → ${entry.id}`)
+  syncIfTeam(config, entry)
 }
 
 async function logDeploy(cwd: string, command: string, response: unknown): Promise<void> {
@@ -194,8 +234,9 @@ async function logDeploy(cwd: string, command: string, response: unknown): Promi
   }
 
   const config = await loadConfig()
-  const entry = await createEntry(config.vaultRoot, draft)
+  const { entry } = await createRoutedEntry(config, await routeDraft(config, repo?.root, draft))
   note(`deploy kaydedildi → ${entry.id}`)
+  syncIfTeam(config, entry)
 }
 
 runHook(async () => {

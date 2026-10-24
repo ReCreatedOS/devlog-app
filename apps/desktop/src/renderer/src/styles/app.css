@@ -550,6 +550,28 @@
   }
 }
 
+/* Takım arkadaşından gelen kayıt: dışarıdan gelen şey `--d-arrive` ile, yavaş
+   söner — kullanıcının kendi eylemi değil, fark edilmesi gereken bir varış. */
+@keyframes row-arrive {
+  0% {
+    background-color: color-mix(in oklch, var(--primary) 22%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.row-arrived {
+  animation: row-arrive var(--d-arrive) var(--ease-entry) 2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row-arrived {
+    animation: none;
+    box-shadow: inset 0 0 0 1px var(--primary);
+  }
+}
+
 /* Uppercase mikro-etiketler tek gramerle: üç ayrı tracking değeri (0.03/0.04/
    0.05em) "her etiket ayrı ayrı, o an uydurularak yazıldı" hissi veriyordu. */
 @utility t-label {

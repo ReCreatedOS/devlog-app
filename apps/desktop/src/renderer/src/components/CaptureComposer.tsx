@@ -31,10 +31,20 @@ export function CaptureComposer({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const cardRef = useRef<HTMLDivElement | null>(null)
 
-  const parsed = useMemo(() => parseCapture(text), [text])
+  const [teams, setTeams] = useState<Array<{ id: string; label: string }>>([])
+  // Önizleme ana süreçle aynı kuralla ayrıştırmalı: `+ekip` yalnız tanımlı bir
+  // takımsa yutulur, yoksa başlıkta kalır.
+  const parsed = useMemo(
+    () => parseCapture(text, { teams: teams.map((team) => team.id) }),
+    [text, teams],
+  )
+  const targetTeam = teams.find((team) => team.id === parsed.team)
 
   useEffect(() => {
     textareaRef.current?.focus()
+    void window.devlog.status().then((status) =>
+      setTeams(status.teams.filter((team) => team.enabled).map(({ id, label }) => ({ id, label }))),
+    )
   }, [])
 
   // Metin büyüdükçe textarea ve (varsa) pencere birlikte büyür.
@@ -107,13 +117,25 @@ export function CaptureComposer({
             #{tag}
           </span>
         ))}
+        {/* Takıma yazmak geri alınamaz bir paylaşım: hedef vurgu renginde,
+            kaydetmeden önce gözden kaçmasın. */}
+        {targetTeam ? (
+          <span
+            className="rounded-2xs border border-primary/50 px-1.5 py-0.5 text-primary"
+            title="Bu kayıt takımın ortak feed'ine gider; ekip arkadaşların görür"
+          >
+            → {targetTeam.label}
+          </span>
+        ) : null}
 
         <span className="ml-auto flex items-center gap-1 text-muted-foreground">
           <Kbd>↵</Kbd> kaydet
           <span className="opacity-50">·</span>
           <Kbd>⇧↵</Kbd> satır
           <span className="opacity-50">·</span>
-          <span title="/tür  !severity  @alan  #etiket">/tür !sev @alan #etiket</span>
+          <span title={`/tür  !severity  @alan  #etiket${teams.length ? '  +takım' : ''}`}>
+            /tür !sev @alan #etiket{teams.length ? ' +takım' : ''}
+          </span>
         </span>
       </div>
     </div>

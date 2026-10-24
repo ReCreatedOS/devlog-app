@@ -42,6 +42,7 @@ export const KEY_ORDER: Array<keyof EntryFrontmatter> = [
   'occurred_at',
   'created_at',
   'updated_at',
+  'author',
   'project',
   'area',
   'tags',

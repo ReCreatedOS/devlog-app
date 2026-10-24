@@ -1,11 +1,11 @@
 import path from 'node:path'
-import { loadConfig, vaultSource, type DevlogConfig } from './config.js'
+import { activeTeams, loadConfig, teamSource, vaultSource, type DevlogConfig } from './config.js'
 import { MiniSearchIndex } from './search.js'
 import { loadClaudeMemorySource } from './sources/claude-memory.js'
 import { applyTracking, loadTracking, matchTracking, type TrackingRecord } from './tracking-store.js'
 import { configureStaleThresholds } from './tracking.js'
 import type { Entry, SourceInfo } from './types.js'
-import { listMarkdownFiles, readEntryFile, type ReadFailure } from './vault.js'
+import { entryOptions, listMarkdownFiles, readEntryFile, type ReadFailure } from './vault.js'
 
 /**
  * Kaynakları okuyup indeksi kuran ortak yol.
@@ -17,12 +17,16 @@ import { listMarkdownFiles, readEntryFile, type ReadFailure } from './vault.js'
 
 export function allSources(config: DevlogConfig): SourceInfo[] {
   // Kapalı kaynaklar taranmaz; vault her zaman açıktır.
-  return [vaultSource(config.vaultRoot), ...config.sources.filter((s) => s.enabled !== false)]
+  return [
+    vaultSource(config.vaultRoot),
+    ...activeTeams(config).map(teamSource),
+    ...config.sources.filter((s) => s.enabled !== false),
+  ]
 }
 
 /** Kapalılar dâhil tüm kaynaklar — ayarlar ekranı bunu gösterir. */
 export function configuredSources(config: DevlogConfig): SourceInfo[] {
-  return [vaultSource(config.vaultRoot), ...config.sources]
+  return [vaultSource(config.vaultRoot), ...(config.teams ?? []).map(teamSource), ...config.sources]
 }
 
 /**
@@ -55,10 +59,7 @@ export async function loadSourceEntries(
   const files = await listMarkdownFiles(path.join(source.root, 'entries'))
   const entries: Entry[] = []
   for (const file of files) {
-    const outcome = await readEntryFile(file, {
-      sourceId: source.id,
-      readOnly: source.readOnly,
-    }).catch(() => null)
+    const outcome = await readEntryFile(file, entryOptions(source)).catch(() => null)
     if (!outcome) continue
     if (outcome.ok) entries.push(outcome.entry)
     else failures.push(outcome.failure)

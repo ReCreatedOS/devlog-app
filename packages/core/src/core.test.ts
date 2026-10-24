@@ -638,3 +638,12 @@ describe('config — yol açma', () => {
     expect(path.isAbsolute(expandHome('vault'))).toBe(true)
   })
 })
+
+describe('parseCapture — +takım', () => {
+  it('yalnız tanımlı takımı yutar, düz metindeki +token\'a dokunmaz', () => {
+    const parsed = parseCapture('Ödeme +ekip akışı +1 oldu', { teams: ['ekip'] })
+    expect(parsed.team).toBe('ekip')
+    expect(parsed.title).toBe('Ödeme akışı +1 oldu')
+    expect(parseCapture('Ödeme +ekip').team).toBeUndefined()
+  })
+})

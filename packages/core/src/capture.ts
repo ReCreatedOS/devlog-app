@@ -6,7 +6,7 @@ import type { EntryDraft, EntryType, Severity } from './types.js'
  *
  *   Prod'da api-gateway patladı /incident !critical @api #auth #worker
  *
- * `/tür` `!severity` `@alan` `#etiket` — metnin herhangi bir yerinde olabilir,
+ * `/tür` `!severity` `@alan` `#etiket` `+takım` — metnin herhangi bir yerinde olabilir,
  * ayıklanır ve geri kalan ilk satır başlık, kalanı gövde olur.
  *
  * Tasarım kararı: `/` ile başlayan bir token **tanınan bir tür değilse** metinde
@@ -81,6 +81,8 @@ export interface CaptureParse {
   severity?: Severity
   area?: string
   tags: string[]
+  /** `+takım` — kayıt o takımın ortak feed'ine gider. */
+  team?: string
   /** Kullanıcı türü açıkça yazdı mı — UI çipini vurgulamak için. */
   explicitType: boolean
 }
@@ -92,9 +94,21 @@ const TAG_RE = /(^|\s)#([\p{L}\p{N}][\p{L}\p{N}_-]*)/gu
 const TYPE_RE = /(^|\s)\/([\p{L}\p{N}_-]+)(?=\s|$)/gu
 const SEVERITY_RE = /(^|\s)!([\p{L}\p{N}_-]+)(?=\s|$)/gu
 const AREA_RE = /(^|\s)@([\p{L}\p{N}_-]+)(?=\s|$)/gu
+const TEAM_RE = /(^|\s)\+([\p{L}\p{N}_-]+)(?=\s|$)/gu
 
-export function parseCapture(input: string): CaptureParse {
+export interface CaptureOptions {
+  /**
+   * Tanımlı takım id'leri. `+token` YALNIZ bunlardan biriyse yutulur: `+1`,
+   * `+ekstra` gibi düz metin takım sanılıp kayıt yanlış yere (ya da hataya)
+   * gitmesin. Takıma yazmak açık bir karar olmalı.
+   */
+  teams?: readonly string[]
+}
+
+export function parseCapture(input: string, options: CaptureOptions = {}): CaptureParse {
   let text = input
+  let team: string | undefined
+  const knownTeams = new Set((options.teams ?? []).map((id) => id.toLowerCase()))
   const tags: string[] = []
   let type: EntryType | undefined
   let severity: Severity | undefined
@@ -120,6 +134,13 @@ export function parseCapture(input: string): CaptureParse {
     return lead
   })
 
+  text = text.replace(TEAM_RE, (match, lead: string, token: string) => {
+    const id = token.toLowerCase()
+    if (team || !knownTeams.has(id)) return match
+    team = id
+    return lead
+  })
+
   text = text.replace(TAG_RE, (_match, lead: string, token: string) => {
     const tag = token.toLowerCase()
     if (!tags.includes(tag)) tags.push(tag)
@@ -142,6 +163,7 @@ export function parseCapture(input: string): CaptureParse {
       severity ?? (SEVERITY_REQUIRED_TYPES.includes(resolvedType) ? 'medium' : undefined),
     area,
     tags,
+    team,
     explicitType: type !== undefined,
   }
 }
@@ -154,5 +176,6 @@ export function captureToDraft(parsed: CaptureParse): EntryDraft {
     severity: parsed.severity,
     area: parsed.area,
     tags: parsed.tags.length ? parsed.tags : undefined,
+    team: parsed.team,
   }
 }

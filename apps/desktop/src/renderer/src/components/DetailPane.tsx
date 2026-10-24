@@ -10,6 +10,7 @@ import {
   Lock,
   Pencil,
   Trash2,
+  Users,
   X,
 } from 'lucide-react'
 import { cn } from '../lib/cn'
@@ -174,7 +175,18 @@ function EntryDetail({
             <span className="numeric text-muted-foreground">
               {absoluteDateTime(entry.occurred_at)} · {relativeTime(entry.occurred_at)}
             </span>
-            {entry.readOnly ? (
+            {entry.author ? (
+              <span
+                className="inline-flex items-center gap-1 text-muted-foreground"
+                title={
+                  entry.readOnly
+                    ? 'Takım kaydı — yalnız yazarı düzenler. Durumunu izlemek kişisel takip dosyana yazılır, takıma gitmez.'
+                    : 'Takım kaydı — kaydedince ekiple eşitlenir'
+                }
+              >
+                <Users size={11} strokeWidth={1.5} /> @{entry.author}
+              </span>
+            ) : entry.readOnly ? (
               <span
                 className="inline-flex items-center gap-1 text-muted-foreground"
                 title="Salt-okunur ayna — kaynağa yazılmaz"

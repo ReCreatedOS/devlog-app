@@ -44,6 +44,8 @@ interface EntryListProps {
   onStatusChange: (id: string, next: EntryStatus | null) => void
   onPinToggle: (id: string, pinned: boolean) => void
   onDelete: (id: string) => void
+  /** Takım arkadaşlarından az önce gelen kayıtlar — kısa bir süre işaretlenir. */
+  arrivedIds?: ReadonlySet<string>
 }
 
 /**
@@ -62,6 +64,7 @@ export function EntryList({
   onStatusChange,
   onPinToggle,
   onDelete,
+  arrivedIds,
 }: EntryListProps): ReactNode {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const rows = useMemo(() => buildRows(items), [items])
@@ -129,6 +132,7 @@ export function EntryList({
                     onStatusChange={onStatusChange}
                     onPinToggle={onPinToggle}
                     onDelete={onDelete}
+                    arrived={arrivedIds?.has(row.entry.id) ?? false}
                   />
                 )}
               </div>
@@ -149,6 +153,7 @@ interface EntryRowProps {
   onStatusChange: (id: string, next: EntryStatus | null) => void
   onPinToggle: (id: string, pinned: boolean) => void
   onDelete: (id: string) => void
+  arrived: boolean
 }
 
 function EntryRow({
@@ -160,6 +165,7 @@ function EntryRow({
   onStatusChange,
   onPinToggle,
   onDelete,
+  arrived,
 }: EntryRowProps): ReactNode {
   const derivedStatus = entry.derived?.includes('status')
   return (
@@ -171,6 +177,7 @@ function EntryRow({
         'group relative flex h-full cursor-default items-center gap-2.5 pr-3 pl-[11px]',
         'transition-[background-color] duration-100',
         selected ? 'row-selected' : 'hover:bg-tint-1',
+        arrived && 'row-arrived',
       )}
     >
       {/*
@@ -209,6 +216,13 @@ function EntryRow({
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5">
+        {/* Yazar makine olgusu değil ama kimlik etiketi: kenar payının mono
+            register'ında, etiketlerin solunda. Yalnız takım kayıtlarında var. */}
+        {entry.author ? (
+          <span className="numeric text-[11px] text-ink-3" title="Takım kaydı — yazarı">
+            @{entry.author}
+          </span>
+        ) : null}
         {(entry.tags ?? []).slice(0, 2).map((tag) => (
           <span key={tag} onClick={(event) => event.stopPropagation()}>
             <TagChip tag={tag} onClick={() => onTagClick(tag)} />

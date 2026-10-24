@@ -1,18 +1,24 @@
 import { readlinkSync, rmSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { BrowserWindow, Menu, app, globalShortcut, ipcMain, nativeTheme, shell } from 'electron'
 import {
+  activeTeams,
   DEFAULT_ACCENT,
   DEFAULT_FONT,
   DEFAULT_LAYOUT,
   DEFAULT_THEME,
   captureToDraft,
   parseCapture,
+  prepareTeam,
+  slugify,
   themeInfo,
+  withTeam,
+  withoutTeam,
 } from '@devlog/core'
 import type { EntryDraft, EntryFrontmatter, QueryFilter, TrackingPatch } from '@devlog/core'
 import { CHANNELS } from '../shared/ipc.js'
-import type { AppSettings, CaptureOutcome } from '../shared/ipc.js'
+import type { AppSettings, CaptureOutcome, JoinTeamRequest, TeamActionOutcome } from '../shared/ipc.js'
 import { DEFAULT_HOTKEY, loadAppConfig, saveAppConfig, type AppConfig } from './config.js'
 import { Library } from './library.js'
 import {
@@ -124,6 +130,32 @@ function registerIpc(lib: Library): void {
     updateSettings(lib, patch),
   )
   ipcMain.handle(CHANNELS.reindex, () => lib.reindex())
+  ipcMain.handle(CHANNELS.sync, () => lib.syncTeams())
+  ipcMain.handle(CHANNELS.joinTeam, async (_e, request: JoinTeamRequest): Promise<TeamActionOutcome> => {
+    try {
+      const team = await prepareTeam(lib.config, {
+        remote: request.remote,
+        author: request.author,
+        label: request.label,
+      })
+      const next = { ...lib.config, ...withTeam(lib.config, team) }
+      await saveAppConfig(next)
+      await lib.applyConfig(next)
+      // İlk eşitleme beklenir: kullanıcı "katıldım ama boş" görmesin.
+      await lib.syncTeams()
+      broadcast(CHANNELS.statusChanged)
+      return { ok: true, settings: readSettings(lib) }
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) }
+    }
+  })
+  ipcMain.handle(CHANNELS.leaveTeam, async (_e, id: string): Promise<TeamActionOutcome> => {
+    const next = { ...lib.config, ...withoutTeam(lib.config, id) }
+    await saveAppConfig(next)
+    await lib.applyConfig(next)
+    broadcast(CHANNELS.statusChanged)
+    return { ok: true, settings: readSettings(lib) }
+  })
   ipcMain.handle(CHANNELS.resolve, (_e, ids: string[]) => lib.resolve(ids))
   ipcMain.handle(CHANNELS.reveal, (_e, id: string) => {
     const target = lib.pathFor(id)
@@ -135,7 +167,7 @@ function registerIpc(lib: Library): void {
   })
 
   ipcMain.handle(CHANNELS.captureSubmit, async (_e, text: string): Promise<CaptureOutcome> => {
-    const parsed = parseCapture(text)
+    const parsed = parseCapture(text, { teams: activeTeams(lib.config).map((team) => team.id) })
     if (!parsed.title) return { ok: false, message: 'Başlık boş olamaz.' }
     try {
       const entry = await lib.create(captureToDraft(parsed))
@@ -175,6 +207,8 @@ function readSettings(lib: Library): AppSettings {
     staleAfterDays: status.staleAfterDays,
     vaultRoot: config.vaultRoot,
     sources: status.sources,
+    teams: status.teams,
+    defaultAuthor: slugify(os.userInfo().username),
   }
 }
 
@@ -208,6 +242,14 @@ async function updateSettings(lib: Library, patch: Partial<AppSettings>): Promis
           return updated ? { ...source, enabled: updated.enabled !== false } : source
         })
       : current.sources,
+    // Takımlar da kaynak listesinde görünüyor; aç/kapa aynı yoldan gelir ama
+    // `sources`'a değil kendi dizilerine yazılır.
+    teams: patch.sources
+      ? current.teams?.map((team) => {
+          const updated = patch.sources?.find((s) => s.id === `team:${team.id}`)
+          return updated ? { ...team, enabled: updated.enabled !== false } : team
+        })
+      : current.teams,
   }
 
   if (patch.theme) applyTheme(patch.theme)
@@ -324,6 +366,10 @@ if (!acquireInstanceLock()) {
     library = new Library(config)
     library.on('changed', (id?: string) => broadcast(CHANNELS.changed, id))
     library.on('status', () => broadcast(CHANNELS.statusChanged))
+    library.on('arrived', (ids: string[]) => broadcast(CHANNELS.arrived, ids))
+    // Pencereye dönünce takım feed'ini tazele: 30 sn'lik turu beklemeden
+    // ekip arkadaşının az önce yazdığını gör.
+    app.on('browser-window-focus', () => void library?.syncTeams({ onFocus: true }))
 
     registerIpc(library)
     buildMenu()

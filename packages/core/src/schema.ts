@@ -32,6 +32,7 @@ export const frontmatterSchema = z
     occurred_at: isoish,
     created_at: isoish,
     updated_at: isoish.optional(),
+    author: z.string().min(1).optional(),
     project: z.string().optional(),
     area: z.string().optional(),
     tags: z.array(z.string()).optional(),

@@ -7,9 +7,21 @@ import {
   SEVERITIES,
   STATUSES,
   TYPE_META,
+  TEAM_ID_RE,
+  activeTeams,
   captureToDraft,
   createEntry,
+  createRoutedEntry,
+  isTeamClone,
   loadConfig,
+  prepareTeam,
+  readSyncState,
+  saveConfig,
+  spawnBackgroundSync,
+  syncTeam,
+  teamOfEntry,
+  withTeam,
+  withoutTeam,
   localDayKey,
   localIso,
   openIndex,
@@ -21,6 +33,7 @@ import {
   writeEntry,
 } from '@devlog/core'
 import type {
+  DevlogConfig,
   Entry,
   EntryDraft,
   EntryStatus,
@@ -28,6 +41,8 @@ import type {
   EntryType,
   QueryFilter,
   Severity,
+  TeamConfig,
+  TeamSyncResult,
   TrackingPatch,
 } from '@devlog/core'
 
@@ -48,6 +63,19 @@ KULLANIM
   devlog where                                       vault yolunu yazdır
   devlog doctor                                      yapılandırma ve sağlık
 
+TAKIM (ortak feed — GitHub üstünden, sunucusuz)
+  devlog team add [<id>] --remote URL [--author ad] [--path dizin] [--label L] [--repo R]…
+                     takım deposunu klonla ve tanımla (aynı id ile tekrar = güncelle;
+                     id verilmezse depo adından: devlog-ekip → ekip)
+  devlog team list                                   takımlar ve son eşitleme
+  devlog team remove <id>                            takımdan ayrıl (klon diskte kalır)
+  devlog sync [id…] [--wait]                         commit'le, al, it
+  devlog new … --team <id>   /   devlog capture "… +<id>"
+                     kayıt takıma gider; verilmezse kişisel vault (takım görmez)
+  --repo: commit/deploy hook kayıtları bu kod depolarından geliyorsa takıma
+  düşer (depo adı, mutlak yol ya da sahip/depo). Oturum özetleri asla gitmez.
+  Takıma gidecek dosyada sır tespit edilirse eşitleme o dosyayı İTMEZ.
+
 FİLTRELER
   --since 7d|24h|YYYY-MM-DD   --until YYYY-MM-DD
   --type T   --status S   --severity V   --tag T   --source S   --limit N
@@ -63,7 +91,7 @@ TAKİP (status)
   yazılır, kaynak dosyaya tek bayt dokunulmaz.
 
 KAYIT ALANLARI (new)
-  --title   --type   --severity   --status   --area   --project
+  --title   --type   --severity   --status   --area   --project   --team id
   --tag t (tekrarlanabilir)   --commit sha   --file yol   --url u
   --occurred ISO   --body METİN | --body -   (- = stdin'den oku)
 
@@ -227,6 +255,17 @@ function guardSecrets(body: string, redactFlag: boolean, allowFlag: boolean): st
   return body
 }
 
+/**
+ * Takım kaydına yazıldıysa eşitlemeyi arka plana bırak: komut ağ beklemeden
+ * dönsün, push çevrimdışıyken düşse bile bir sonraki eşitleme toparlar.
+ */
+function afterWrite(config: DevlogConfig, entry: Pick<Entry, 'sourceId'>): TeamConfig | undefined {
+  const team = teamOfEntry(config, entry)
+  const script = process.argv[1]
+  if (team && script) spawnBackgroundSync(script, team.id)
+  return team
+}
+
 async function commandNew(argv: string[]): Promise<void> {
   const { values } = parseArgs({
     args: argv,
@@ -242,6 +281,7 @@ async function commandNew(argv: string[]): Promise<void> {
       file: { type: 'string', multiple: true },
       url: { type: 'string', multiple: true },
       link: { type: 'string', multiple: true },
+      team: { type: 'string' },
       occurred: { type: 'string' },
       body: { type: 'string' },
       redact: { type: 'boolean' },
@@ -259,6 +299,7 @@ async function commandNew(argv: string[]): Promise<void> {
     title: values.title,
     type,
     body,
+    team: values.team,
     severity: oneOf(values.severity, SEVERITIES, 'severity'),
     status: oneOf(values.status, STATUSES, 'durum'),
     area: values.area,
@@ -278,9 +319,13 @@ async function commandNew(argv: string[]): Promise<void> {
   if ((type === 'incident' || type === 'security') && !draft.severity) draft.severity = 'medium'
 
   const config = await loadConfig()
-  const entry = await createEntry(config.vaultRoot, draft)
-  if (values.json) process.stdout.write(`${JSON.stringify({ id: entry.id, path: entry.path })}\n`)
-  else process.stdout.write(`${entry.id}\n${entry.path}\n`)
+  const { entry, team } = await createRoutedEntry(config, draft)
+  afterWrite(config, entry)
+  if (values.json) {
+    process.stdout.write(`${JSON.stringify({ id: entry.id, path: entry.path, team: team?.id })}\n`)
+  } else {
+    process.stdout.write(`${entry.id}\n${entry.path}\n${team ? `→ takım: ${team.label}\n` : ''}`)
+  }
 }
 
 async function commandCapture(argv: string[]): Promise<void> {
@@ -290,15 +335,19 @@ async function commandCapture(argv: string[]): Promise<void> {
     options: { json: { type: 'boolean' }, redact: { type: 'boolean' } },
   })
   const text = positionals.join(' ').trim() || (await readStdin())
-  const parsed = parseCapture(text)
+  const config = await loadConfig()
+  const parsed = parseCapture(text, { teams: activeTeams(config).map((team) => team.id) })
   if (!parsed.title) fail('başlık boş')
   const draft = captureToDraft(parsed)
   draft.body = guardSecrets(draft.body, Boolean(values.redact), false)
 
-  const config = await loadConfig()
-  const entry = await createEntry(config.vaultRoot, draft)
-  if (values.json) process.stdout.write(`${JSON.stringify({ id: entry.id, path: entry.path })}\n`)
-  else process.stdout.write(`${entry.id}\n`)
+  const { entry, team } = await createRoutedEntry(config, draft)
+  afterWrite(config, entry)
+  if (values.json) {
+    process.stdout.write(`${JSON.stringify({ id: entry.id, path: entry.path, team: team?.id })}\n`)
+  } else {
+    process.stdout.write(`${entry.id}${team ? `  → takım: ${team.label}` : ''}\n`)
+  }
 }
 
 async function commandList(argv: string[], withText: boolean): Promise<void> {
@@ -345,7 +394,14 @@ async function commandShow(argv: string[]): Promise<void> {
 
 /** Salt-okunur aynadaki kayıtlar değiştirilemez — kaynağı başka bir aracın. */
 function requireWritable(entry: Entry): void {
-  if (entry.readOnly) fail(`kayıt salt-okunur bir aynadan geliyor: ${entry.sourceId}`)
+  if (!entry.readOnly) return
+  if (entry.sourceId.startsWith('team:')) {
+    fail(
+      `bu takım kaydı ${entry.author ?? 'başkasına'} ait; başkasının dosyası düzenlenmez.\n` +
+        `  Kendi kaydını aç ve gövdede [[${entry.id}]] ile bağla.`,
+    )
+  }
+  fail(`kayıt salt-okunur bir aynadan geliyor: ${entry.sourceId}`)
 }
 
 async function commandAppend(argv: string[]): Promise<void> {
@@ -372,6 +428,7 @@ async function commandAppend(argv: string[]): Promise<void> {
     `${entry.body.trimEnd()}\n\n${safe.trim()}`,
     entry.path,
   )
+  afterWrite(config, entry)
   if (values.json) process.stdout.write(`${JSON.stringify({ id, path: written })}\n`)
   else process.stdout.write(`${written}\n`)
 }
@@ -422,6 +479,8 @@ async function commandStatus(argv: string[]): Promise<void> {
     { ...patch, next_action: mask(patch.next_action), note: mask(patch.note) },
     values.agent ? 'agent' : 'user',
   )
+  // Başkasının takım kaydını izlemek kişisel takip dosyasına yazar — takıma gitmez.
+  if (outcome.target === 'entry') afterWrite(config, entry)
   if (values.json) {
     process.stdout.write(
       `${JSON.stringify({ id, ...patch, target: outcome.target, path: outcome.path })}\n`,
@@ -545,6 +604,158 @@ async function commandTimeline(argv: string[]): Promise<void> {
   printSummaries(result.items, false)
 }
 
+/** `12 sn önce` — eşitleme durumunu insan diliyle. */
+function ago(iso: string): string {
+  const seconds = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000))
+  if (seconds < 60) return `${seconds} sn önce`
+  if (seconds < 3600) return `${Math.round(seconds / 60)} dk önce`
+  if (seconds < 86_400) return `${Math.round(seconds / 3600)} sa önce`
+  return `${Math.round(seconds / 86_400)} gün önce`
+}
+
+function describeSync(result: TeamSyncResult): string {
+  if (result.skipped === 'busy') return 'başka bir süreç eşitliyor'
+  const parts: string[] = []
+  if (result.committed) parts.push(`${result.committed} dosya commit'lendi`)
+  if (result.pulled) parts.push(`${result.pulled} commit alındı`)
+  if (result.pushed) parts.push(`${result.pushed} commit itildi`)
+  if (parts.length === 0 && result.ok) parts.push('güncel')
+  if (result.error) parts.push(`HATA: ${result.error}`)
+  return parts.join(' · ')
+}
+
+function printSyncWarnings(result: TeamSyncResult): void {
+  for (const item of result.blocked) {
+    process.stdout.write(`  ✗ itilmedi (sır: ${item.found.join(', ')}): ${item.path}\n`)
+  }
+  for (const file of result.foreign) {
+    process.stdout.write(`  ! başkasının dosyası yerelde değişmiş, commit'lenmedi: ${file}\n`)
+  }
+}
+
+async function commandTeam(argv: string[]): Promise<void> {
+  const [sub, ...rest] = argv
+  if (sub === 'add') return commandTeamAdd(rest)
+  if (sub === 'remove') return commandTeamRemove(rest)
+  if (sub === 'list' || sub === undefined) return commandTeamList(rest)
+  fail('kullanım: devlog team add [<id>] --remote URL … | devlog team list | devlog team remove <id>')
+}
+
+async function commandTeamRemove(argv: string[]): Promise<void> {
+  const id = argv[0]?.toLowerCase()
+  const config = await loadConfig()
+  const team = id ? (config.teams ?? []).find((item) => item.id === id) : undefined
+  if (!team) fail(`tanımlı takım değil: ${id ?? '(boş)'}`)
+  await saveConfig(withoutTeam(config, team.id))
+  // Klon silinmez: içinde itilmemiş kendi kayıtların olabilir.
+  process.stdout.write(`${team.id} çıkarıldı; klon diskte duruyor: ${team.root}\n`)
+}
+
+async function commandTeamAdd(argv: string[]): Promise<void> {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    allowPositionals: true,
+    options: {
+      remote: { type: 'string' },
+      author: { type: 'string' },
+      path: { type: 'string' },
+      label: { type: 'string' },
+      repo: { type: 'string', multiple: true },
+      json: { type: 'boolean' },
+    },
+  })
+  const id = positionals[0]?.toLowerCase()
+  if (id && !TEAM_ID_RE.test(id)) fail('takım id\'si: küçük harf, rakam, tire (ör. `ekip`)')
+
+  const config = await loadConfig()
+  const existing = id ? (config.teams ?? []).find((team) => team.id === id) : undefined
+  const remote = values.remote ?? existing?.remote
+  if (!remote) fail('--remote gerekli (ör. git@github.com:Org/devlog-ekip.git — private olmalı)')
+
+  const team = await prepareTeam(config, {
+    remote,
+    id,
+    author: values.author,
+    label: values.label,
+    root: values.path ? path.resolve(values.path) : undefined,
+    repos: values.repo,
+  })
+  await saveConfig(withTeam(config, team))
+
+  // İlk eşitleme: boş depoya rehber dosyalarını koyar, dolu depodan feed'i alır.
+  const result = await syncTeam(team, { wait: 30_000 })
+  if (values.json) {
+    process.stdout.write(`${JSON.stringify({ team, sync: result }, null, 2)}\n`)
+    return
+  }
+  process.stdout.write(`takım      ${team.label} (${team.id})\n`)
+  process.stdout.write(`klon       ${team.root}\n`)
+  process.stdout.write(`yazar      ${team.author}\n`)
+  process.stdout.write(`depolar    ${team.repos?.join(', ') || '— (commit/deploy kayıtları kişisel kalır)'}\n`)
+  process.stdout.write(`eşitleme   ${describeSync(result)}\n`)
+  printSyncWarnings(result)
+  if (!result.ok) process.exitCode = 1
+}
+
+async function commandTeamList(argv: string[]): Promise<void> {
+  const { values } = parseArgs({ args: argv, options: { json: { type: 'boolean' } } })
+  const config = await loadConfig()
+  const teams = config.teams ?? []
+  const rows = await Promise.all(
+    teams.map(async (team) => ({
+      ...team,
+      cloned: await isTeamClone(team),
+      lastSync: await readSyncState(team.id),
+    })),
+  )
+  if (values.json) {
+    process.stdout.write(`${JSON.stringify(rows, null, 2)}\n`)
+    return
+  }
+  if (rows.length === 0) {
+    process.stdout.write('tanımlı takım yok — `devlog team add <id> --remote URL`\n')
+    return
+  }
+  for (const row of rows) {
+    const off = row.enabled === false ? ' (kapalı)' : ''
+    process.stdout.write(`${row.id}${off}  ${row.label}  @${row.author}\n`)
+    process.stdout.write(`  klon      ${row.root}${row.cloned ? '' : '  ✗ YOK'}\n`)
+    process.stdout.write(`  depolar   ${row.repos?.join(', ') || '—'}\n`)
+    process.stdout.write(
+      `  eşitleme  ${row.lastSync ? `${ago(row.lastSync.at)} · ${describeSync(row.lastSync)}` : 'hiç'}\n`,
+    )
+  }
+}
+
+async function commandSync(argv: string[]): Promise<void> {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    allowPositionals: true,
+    options: { wait: { type: 'boolean' }, quiet: { type: 'boolean' }, json: { type: 'boolean' } },
+  })
+  const config = await loadConfig()
+  const all = activeTeams(config)
+  const selected = positionals.length ? all.filter((team) => positionals.includes(team.id)) : all
+  if (positionals.length && selected.length !== positionals.length) {
+    fail(`tanınmayan ya da kapalı takım: ${positionals.filter((id) => !selected.some((t) => t.id === id)).join(', ')}`)
+  }
+  if (selected.length === 0) {
+    if (!values.quiet) process.stdout.write('tanımlı takım yok\n')
+    return
+  }
+  // `--wait`: hook'un arka plan süreci, o an çalışan bir eşitlemeyi beklesin;
+  // yoksa yeni yazılan kayıt bir sonraki tura kadar itilmeden kalırdı.
+  const results = await Promise.all(selected.map((team) => syncTeam(team, { wait: values.wait ? 90_000 : 0 })))
+  if (values.json) process.stdout.write(`${JSON.stringify(results, null, 2)}\n`)
+  else if (!values.quiet) {
+    for (const result of results) {
+      process.stdout.write(`${result.team}  ${describeSync(result)}\n`)
+      printSyncWarnings(result)
+    }
+  }
+  if (results.some((result) => !result.ok)) process.exitCode = 1
+}
+
 async function commandWhere(argv: string[]): Promise<void> {
   const { values } = parseArgs({ args: argv, options: { json: { type: 'boolean' } } })
   const config = await loadConfig()
@@ -644,6 +855,11 @@ async function commandDoctor(argv: string[]): Promise<void> {
     entries: index.size(),
     sources: [
       { id: 'vault', label: 'Seyir defteri', count: facets.sources['vault'] ?? 0 },
+      ...(config.teams ?? []).map((team) => ({
+        id: `team:${team.id}`,
+        label: `Takım · ${team.label}`,
+        count: facets.sources[`team:${team.id}`] ?? 0,
+      })),
       ...config.sources.map((s) => ({
         id: s.id,
         label: s.label,
@@ -651,6 +867,15 @@ async function commandDoctor(argv: string[]): Promise<void> {
       })),
     ],
     byType: facets.types,
+    teams: await Promise.all(
+      (config.teams ?? []).map(async (team) => ({
+        id: team.id,
+        root: team.root,
+        author: team.author,
+        cloned: await isTeamClone(team),
+        lastSync: await readSyncState(team.id),
+      })),
+    ),
     hooks,
     sessions,
     orphanTracking,
@@ -665,6 +890,17 @@ async function commandDoctor(argv: string[]): Promise<void> {
   process.stdout.write(`kayıt      ${report.entries}\n`)
   for (const source of report.sources) {
     process.stdout.write(`  ${source.label.padEnd(24)} ${source.count}\n`)
+  }
+  if (report.teams.length > 0) {
+    process.stdout.write('\ntakım\n')
+    for (const team of report.teams) {
+      const state = !team.cloned
+        ? `✗ klon yok: ${team.root}`
+        : team.lastSync
+          ? `${team.lastSync.ok ? '✓' : '✗'} ${ago(team.lastSync.at)} · ${describeSync(team.lastSync)}`
+          : '· henüz eşitlenmedi'
+      process.stdout.write(`  ${team.id.padEnd(14)} @${team.author}  ${state}\n`)
+    }
   }
   process.stdout.write('\nhook\n')
   for (const hook of report.hooks) {
@@ -729,6 +965,10 @@ async function main(): Promise<void> {
       return commandWhere(rest)
     case 'doctor':
       return commandDoctor(rest)
+    case 'team':
+      return commandTeam(rest)
+    case 'sync':
+      return commandSync(rest)
     case undefined:
     case '-h':
     case '--help':

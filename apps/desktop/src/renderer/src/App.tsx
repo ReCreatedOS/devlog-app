@@ -137,6 +137,7 @@ function isTypingTarget(target: EventTarget | null): boolean {
 export function App(): ReactNode {
   const [filter, setFilter] = useState<QueryFilter>({ sort: 'newest' })
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [arrivedIds, setArrivedIds] = useState<ReadonlySet<string>>(() => new Set())
   const [editing, setEditing] = useState(false)
   const [density, setDensity] = useState<Density>('compact')
   const [view, setView] = useState<ListView>(() => readUiState().view ?? 'list')
@@ -191,6 +192,21 @@ export function App(): ReactNode {
       setSelectedId(visibleItems[0]?.id ?? null)
     }
   }, [visibleItems, selectedId])
+
+  // Takım arkadaşından gelen kayıtlar birkaç saniye işaretli kalır: liste
+  // sessizce kaydığında neyin yeni olduğunu gözle bulmak imkânsız.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const off = window.devlog.onArrived((ids) => {
+      setArrivedIds(new Set(ids))
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => setArrivedIds(new Set()), 4_000)
+    })
+    return () => {
+      off()
+      if (timer) clearTimeout(timer)
+    }
+  }, [])
 
   // Ayarlar: tema, bayatlık eşikleri ve açılış kipi buradan gelir.
   useEffect(() => {
@@ -538,6 +554,7 @@ export function App(): ReactNode {
               onStatusChange={setStatus}
               onPinToggle={(id, pinned) => void track(id, { pinned })}
               onDelete={removeEntry}
+              arrivedIds={arrivedIds}
               onTagClick={(tag) =>
                 setFilter((prev) => ({
                   ...prev,
@@ -603,6 +620,7 @@ export function App(): ReactNode {
           onChange={(patch) => void updateSettings(patch)}
           onClose={() => setSettingsOpen(false)}
           onReindex={() => void window.devlog.reindex()}
+          onReplace={setSettings}
         />
       ) : null}
 

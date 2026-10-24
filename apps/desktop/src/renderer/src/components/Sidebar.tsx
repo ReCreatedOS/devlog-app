@@ -1,8 +1,22 @@
 import type { ReactNode } from 'react'
 import { ENTRY_TYPES, SAVED_VIEWS, TYPE_META } from '@devlog/core/shared'
 import type { EntryType, Facets, QueryFilter, SavedView } from '@devlog/core/shared'
-import { AlertTriangle, Copy, Hash, Layers, Loader2, RefreshCw, Star, Unlink } from 'lucide-react'
+import {
+  AlertTriangle,
+  ArrowDownUp,
+  CloudOff,
+  Copy,
+  Hash,
+  Layers,
+  Loader2,
+  RefreshCw,
+  ShieldAlert,
+  Star,
+  Unlink,
+  Users,
+} from 'lucide-react'
 import { cn } from '../lib/cn'
+import { relativeTime } from '../lib/format'
 /**
  * Kayıtlı görünümün sayacı. Bayatlık sayısı korpus taraması gerektirdiği için
  * burada hesaplanmaz — o rakam takip kipinin kendi şeridinde çıkar.
@@ -12,7 +26,7 @@ function countForView(view: SavedView, facets: Facets): number | undefined {
   if (!statuses?.length) return undefined
   return statuses.reduce((total, status) => total + (facets.statuses[status] ?? 0), 0)
 }
-import type { LibraryStatus } from '../../../shared/ipc.js'
+import type { LibraryStatus, TeamStatus } from '../../../shared/ipc.js'
 import { SectionLabel } from './primitives'
 
 interface RailItemProps {
@@ -20,14 +34,18 @@ interface RailItemProps {
   count?: number
   active?: boolean
   icon?: ReactNode
+  /** Sayacın sağında duran durum işareti (ör. takım eşitlemesi). */
+  trailing?: ReactNode
+  title?: string
   onClick: () => void
 }
 
-function RailItem({ label, count, active, icon, onClick }: RailItemProps): ReactNode {
+function RailItem({ label, count, active, icon, trailing, title, onClick }: RailItemProps): ReactNode {
   return (
     <button
       type="button"
       onClick={onClick}
+      title={title}
       className={cn(
         'hit group relative flex h-7 w-full items-center gap-2 rounded-sm px-2 text-[13px]',
         active ? 'bg-tint-2 font-medium text-ink' : 'text-ink-2 hover:bg-tint-1 hover:text-ink',
@@ -46,8 +64,47 @@ function RailItem({ label, count, active, icon, onClick }: RailItemProps): React
       {count !== undefined && count > 0 ? (
         <span className="numeric text-[11px] text-ink-3">{count}</span>
       ) : null}
+      {trailing}
     </button>
   )
+}
+
+/**
+ * Takım satırının durum işareti. Her şey yolundaysa hiçbir şey çizilmez:
+ * bu rayda renk "dikkat" demek, "güncel" sessizliktir.
+ */
+function teamSignal(team: TeamStatus): { icon: ReactNode; title: string } {
+  const last = team.lastSync
+  const base = `${team.label} · @${team.author}`
+  if (team.syncing) {
+    return {
+      icon: <Loader2 size={12} strokeWidth={1.5} className="animate-spin text-ink-3" />,
+      title: `${base}\neşitleniyor…`,
+    }
+  }
+  if (!last) return { icon: null, title: `${base}\nhenüz eşitlenmedi` }
+  const when = `son eşitleme ${relativeTime(last.at)}`
+  if (last.blocked.length > 0) {
+    return {
+      icon: <ShieldAlert size={12} strokeWidth={1.5} className="text-warning" />,
+      title:
+        `${base}\n${last.blocked.length} dosya sır taşıdığı için İTİLMEDİ:\n` +
+        last.blocked.map((item) => `${item.path} (${item.found.join(', ')})`).join('\n'),
+    }
+  }
+  if (last.error) {
+    return {
+      icon: <AlertTriangle size={12} strokeWidth={1.5} className="text-warning" />,
+      title: `${base}\n${last.error}\n${when}`,
+    }
+  }
+  if (last.pending) {
+    return {
+      icon: <CloudOff size={12} strokeWidth={1.5} className="text-ink-3" />,
+      title: `${base}\nitilmeyi bekleyen yerel kayıt var · ${when}`,
+    }
+  }
+  return { icon: null, title: `${base}\n${when}` }
 }
 
 interface SidebarProps {
@@ -90,6 +147,22 @@ export function Sidebar({
     )
   }
 
+  const teams = status?.teams ?? []
+  const teamSourceIds = new Set(teams.map((team) => `team:${team.id}`))
+  const otherSources = (status?.sources ?? []).filter((source) => !teamSourceIds.has(source.id))
+  const lastTeamSync = teams
+    .map((team) => team.lastSync?.at)
+    .filter((at): at is string => Boolean(at))
+    .sort()
+    .at(-1)
+  const teamSyncing = teams.some((team) => team.syncing)
+  const toggleSource = (id: string): void =>
+    onFilterChange(
+      activeSource === id
+        ? { sort: filter.sort, text: filter.text }
+        : { sort: filter.sort, text: filter.text, sources: [id] },
+    )
+
   const failures = status?.failures ?? []
   const orphans = status?.orphanTracking ?? []
   const collisions = status?.collisions ?? []
@@ -118,22 +191,40 @@ export function Sidebar({
           />
         ))}
 
-        {status && status.sources.length > 1 ? (
+        {teams.some((team) => team.enabled) ? (
+          <>
+            <SectionLabel>Takım</SectionLabel>
+            {teams
+              .filter((team) => team.enabled)
+              .map((team) => {
+                const id = `team:${team.id}`
+                const signal = teamSignal(team)
+                return (
+                  <RailItem
+                    key={id}
+                    label={team.label}
+                    count={status?.sources.find((source) => source.id === id)?.count}
+                    active={activeSource === id}
+                    icon={<Users size={13} strokeWidth={1.5} />}
+                    trailing={signal.icon}
+                    title={signal.title}
+                    onClick={() => toggleSource(id)}
+                  />
+                )
+              })}
+          </>
+        ) : null}
+
+        {otherSources.length > 1 ? (
           <>
             <SectionLabel>Kaynaklar</SectionLabel>
-            {status.sources.map((source) => (
+            {otherSources.map((source) => (
               <RailItem
                 key={source.id}
                 label={source.label}
                 count={source.count}
                 active={activeSource === source.id}
-                onClick={() =>
-                  onFilterChange(
-                    activeSource === source.id
-                      ? { sort: filter.sort, text: filter.text }
-                      : { sort: filter.sort, text: filter.text, sources: [source.id] },
-                  )
-                }
+                onClick={() => toggleSource(source.id)}
               />
             ))}
           </>
@@ -200,6 +291,27 @@ export function Sidebar({
             <AlertTriangle size={12} strokeWidth={1.5} className="mt-px shrink-0" />
             <span>{failures.length} dosya şemaya uymuyor</span>
           </div>
+        ) : null}
+        {teams.some((team) => team.enabled) ? (
+          <button
+            type="button"
+            onClick={() => void window.devlog.sync()}
+            className="mb-1 flex w-full items-center gap-1.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+            title="Takım feed'ini şimdi eşitle (otomatik: 30 sn'de bir ve pencereye dönüşte)"
+          >
+            {teamSyncing ? (
+              <Loader2 size={12} strokeWidth={1.5} className="animate-spin" />
+            ) : (
+              <ArrowDownUp size={12} strokeWidth={1.5} />
+            )}
+            <span className="numeric">
+              {teamSyncing
+                ? 'eşitleniyor…'
+                : lastTeamSync
+                  ? `takım · ${relativeTime(lastTeamSync)}`
+                  : 'takım · eşitlenmedi'}
+            </span>
+          </button>
         ) : null}
         <button
           type="button"

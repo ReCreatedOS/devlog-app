@@ -1,17 +1,19 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { ACCENTS, ACTIVE_STATUSES, FONTS, LAYOUTS, STATUS_LABEL, THEMES } from '@devlog/core/shared'
 import type { EntryStatus } from '@devlog/core/shared'
-import { Database, Keyboard, ListChecks, Palette, X } from 'lucide-react'
+import { Database, Keyboard, ListChecks, Loader2, Palette, Users, X } from 'lucide-react'
 import { cn } from '../lib/cn'
+import { relativeTime } from '../lib/format'
 import type { AppSettings } from '../../../shared/ipc.js'
 import { Button, IconButton, Kbd } from './primitives'
 
-type SectionId = 'gorunum' | 'takip' | 'kaynaklar' | 'kisayol'
+type SectionId = 'gorunum' | 'takip' | 'kaynaklar' | 'takim' | 'kisayol'
 
 const SECTIONS: Array<{ id: SectionId; label: string; icon: ReactNode; hint: string }> = [
   { id: 'gorunum', label: 'Görünüm', icon: <Palette size={14} strokeWidth={1.5} />, hint: 'tema, açılış, yoğunluk' },
   { id: 'takip', label: 'Takip', icon: <ListChecks size={14} strokeWidth={1.5} />, hint: 'bayatlık eşikleri' },
   { id: 'kaynaklar', label: 'Kaynaklar', icon: <Database size={14} strokeWidth={1.5} />, hint: 'hangi kökler taranıyor' },
+  { id: 'takim', label: 'Takım', icon: <Users size={14} strokeWidth={1.5} />, hint: 'ortak feed — GitHub üstünden' },
   { id: 'kisayol', label: 'Kısayol', icon: <Keyboard size={14} strokeWidth={1.5} />, hint: 'global yakalama tuşu' },
 ]
 
@@ -21,6 +23,8 @@ interface SettingsPanelProps {
   onChange: (patch: Partial<AppSettings>) => void
   onClose: () => void
   onReindex: () => void
+  /** Katıl/ayrıl gibi sunucu tarafında tamamlanan işlemlerden dönen ayarlar. */
+  onReplace: (next: AppSettings) => void
 }
 
 /**
@@ -41,6 +45,7 @@ export function SettingsPanel({
   onChange,
   onClose,
   onReindex,
+  onReplace,
 }: SettingsPanelProps): ReactNode {
   const [section, setSection] = useState<SectionId>('gorunum')
 
@@ -308,6 +313,8 @@ export function SettingsPanel({
             </Section>
           ) : null}
 
+          {section === 'takim' ? <TeamSection settings={settings} onReplace={onReplace} /> : null}
+
           {section === 'kisayol' ? (
             <Section title="Global yakalama kısayolu">
               <p className="mb-4 max-w-prose text-[12px] leading-relaxed text-muted-foreground">
@@ -335,6 +342,150 @@ export function SettingsPanel({
         </div>
       </div>
     </div>
+  )
+}
+
+/**
+ * Takıma katılma. Paketlenmiş uygulamada CLI yok — katılmak buradan olmalı.
+ * Klonlama GitHub kimliğini git'ten alır; uygulama parola sormaz.
+ */
+function TeamSection({
+  settings,
+  onReplace,
+}: {
+  settings: AppSettings
+  onReplace: (next: AppSettings) => void
+}): ReactNode {
+  const [remote, setRemote] = useState('')
+  const [author, setAuthor] = useState('')
+  const [label, setLabel] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const join = async (): Promise<void> => {
+    setBusy(true)
+    setError(null)
+    const outcome = await window.devlog.joinTeam({
+      remote,
+      author: author || undefined,
+      label: label || undefined,
+    })
+    setBusy(false)
+    if (!outcome.ok) {
+      setError(outcome.message)
+      return
+    }
+    setRemote('')
+    setLabel('')
+    onReplace(outcome.settings)
+  }
+
+  const leave = async (id: string): Promise<void> => {
+    const outcome = await window.devlog.leaveTeam(id)
+    if (outcome.ok) onReplace(outcome.settings)
+  }
+
+  const field = 'h-8 w-full rounded-sm border border-border bg-surface-2 px-2 font-mono text-[12px] focus:border-primary/60 focus:outline-none'
+
+  return (
+    <Section title="Takım feed'i">
+      <p className="mb-3 max-w-prose text-[12px] leading-relaxed text-muted-foreground">
+        Takım, ekibin <b>private bir GitHub deposudur</b>; herkesin kayıtları tek akışta birleşir.
+        Kişisel defterin hiçbir zaman itilmez. Takıma yalnız açıkça seçtiğin kayıtlar gider:
+        hızlı yakalamada <code className="font-mono text-[11px]">+takım</code>. Her kişi yalnız
+        kendi kayıtlarını düzenler; sır taşıyan dosya itilmez.
+      </p>
+
+      {settings.teams.length > 0 ? (
+        <div className="mb-5 max-w-2xl divide-y divide-border rounded-md border border-border">
+          {settings.teams.map((team) => (
+            <div key={team.id} className="flex items-center gap-3 px-3 py-2.5">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 text-[13px]">
+                  <span className="font-medium">{team.label}</span>
+                  <span className="numeric text-[11px] text-muted-foreground">@{team.author}</span>
+                  {team.enabled ? null : (
+                    <span className="text-[10px] text-muted-foreground">kapalı</span>
+                  )}
+                </div>
+                <div className="truncate font-mono text-[11px] text-muted-foreground">{team.root}</div>
+                <div
+                  className={cn(
+                    'text-[11px]',
+                    team.lastSync?.error || team.lastSync?.blocked.length ? 'text-warning' : 'text-muted-foreground',
+                  )}
+                >
+                  {!team.lastSync
+                    ? 'henüz eşitlenmedi'
+                    : team.lastSync.error
+                      ? team.lastSync.error
+                      : team.lastSync.blocked.length
+                        ? `${team.lastSync.blocked.length} dosya sır yüzünden itilmedi`
+                        : `eşitlendi · ${relativeTime(team.lastSync.at)}`}
+                </div>
+              </div>
+              <Button
+                variant="danger"
+                onClick={() => void leave(team.id)}
+                title="Takımı listeden çıkarır. Klon diskte kalır — içinde itilmemiş kaydın olabilir."
+              >
+                Ayrıl
+              </Button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="max-w-2xl rounded-md border border-border p-3">
+        <div className="mb-2 text-[13px] font-medium">Takıma katıl</div>
+        <label className="mb-2 block">
+          <span className="mb-1 block text-[11px] text-muted-foreground">Depo adresi</span>
+          <input
+            className={field}
+            value={remote}
+            onChange={(event) => setRemote(event.target.value)}
+            placeholder="https://github.com/Org/devlog-ekip.git"
+            spellCheck={false}
+          />
+        </label>
+        <div className="mb-3 grid grid-cols-2 gap-2">
+          <label className="block">
+            <span className="mb-1 block text-[11px] text-muted-foreground">
+              Yazar adın (kayıtlarda @ad olarak görünür, sonradan değişmez)
+            </span>
+            <input
+              className={field}
+              value={author}
+              onChange={(event) => setAuthor(event.target.value)}
+              placeholder={settings.defaultAuthor}
+              spellCheck={false}
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-[11px] text-muted-foreground">Görünen ad (isteğe bağlı)</span>
+            <input
+              className={field}
+              value={label}
+              onChange={(event) => setLabel(event.target.value)}
+              placeholder="depo adından"
+              spellCheck={false}
+            />
+          </label>
+        </div>
+        {error ? <p className="mb-2 text-[12px] leading-relaxed text-warning">{error}</p> : null}
+        <div className="flex items-center gap-3">
+          <Button variant="primary" disabled={busy || !remote.trim()} onClick={() => void join()}>
+            {busy ? <Loader2 size={13} strokeWidth={1.5} className="animate-spin" /> : null}
+            {busy ? 'Klonlanıyor…' : 'Katıl'}
+          </Button>
+          <span className="text-[11px] leading-snug text-muted-foreground">
+            Depoya davetli olmalısın ve git GitHub'a giriş yapmış olmalı
+            (<code className="font-mono">gh auth login</code> +{' '}
+            <code className="font-mono">gh auth setup-git</code>).
+          </span>
+        </div>
+      </div>
+    </Section>
   )
 }
 

@@ -3,15 +3,17 @@ import path from 'node:path'
 import chokidar, { type FSWatcher } from 'chokidar'
 import {
   MiniSearchIndex,
+  activeTeams,
   allSources,
   applyTracking,
-  createEntry,
   deleteEntryFile,
   ACTIVE_STATUSES,
   STALE_AFTER_DAYS,
   configuredSources,
   configureStaleThresholds,
+  createRoutedEntry,
   ensureVault,
+  entryOptions,
   entryRelativePath,
   findCollisions,
   loadSourceEntries,
@@ -20,8 +22,11 @@ import {
   matchTracking,
   readClaudeMemoryFile,
   readEntryFile,
+  readSyncState,
   readTracking,
   redact,
+  syncTeam,
+  teamOfEntry,
   trackEntry,
   trackingDir,
   writeEntry,
@@ -35,11 +40,19 @@ import type {
   QueryResult,
   ReadFailure,
   SourceInfo,
+  TeamSyncResult,
   TrackingPatch,
   TrackingRecord,
 } from '@devlog/core'
 import type { AppConfig } from './config.js'
-import type { EntryDetail, LibraryStatus, SaveOutcome } from '../shared/ipc.js'
+import type { EntryDetail, LibraryStatus, SaveOutcome, TeamStatus } from '../shared/ipc.js'
+
+/** Uygulama açıkken takım feed'i bu aralıkla GitHub'dan tazelenir. */
+const SYNC_INTERVAL_MS = 30_000
+/** Pencereye dönüşte tetiklenen eşitleme bundan sık çalışmaz. */
+const FOCUS_SYNC_MIN_GAP_MS = 10_000
+/** Arka arkaya yazımlar tek push'ta toplansın. */
+const PUSH_DEBOUNCE_MS = 800
 
 /**
  * Ana süreçteki veri katmanı: kaynakları tarar, indeksi kurar, dosya
@@ -59,6 +72,10 @@ export class Library extends EventEmitter {
   #watcher: FSWatcher | null = null
   #indexing = false
   #pending = new Map<string, NodeJS.Timeout>()
+  #sync = new Map<string, TeamSyncResult>()
+  #syncing = new Set<string>()
+  #syncTimer: NodeJS.Timeout | null = null
+  #pushTimers = new Map<string, NodeJS.Timeout>()
 
   constructor(config: AppConfig) {
     super()
@@ -79,10 +96,10 @@ export class Library extends EventEmitter {
    * tema değiştirmek 74 dosyayı yeniden okumamalı.
    */
   async applyConfig(next: AppConfig): Promise<void> {
-    const before = JSON.stringify([this.#config.vaultRoot, this.#config.sources])
+    const before = JSON.stringify([this.#config.vaultRoot, this.#config.sources, this.#config.teams])
     this.#config = next
     configureStaleThresholds(next.tracking?.staleAfterDays)
-    const after = JSON.stringify([next.vaultRoot, next.sources])
+    const after = JSON.stringify([next.vaultRoot, next.sources, next.teams])
     if (before !== after) {
       await this.#watcher?.close()
       this.#watcher = null
@@ -99,8 +116,67 @@ export class Library extends EventEmitter {
 
   async init(): Promise<void> {
     await ensureVault(this.#config.vaultRoot)
+    // Son bilinen eşitleme durumu (CLI/MCP/hook da yazıyor) — kenar çubuğu
+    // ilk karede "hiç eşitlenmedi" yalanını söylemesin.
+    for (const team of activeTeams(this.#config)) {
+      const last = await readSyncState(team.id)
+      if (last) this.#sync.set(team.id, last)
+    }
     await this.reindex()
     this.#startWatching()
+    this.#syncTimer = setInterval(() => void this.syncTeams(), SYNC_INTERVAL_MS)
+    void this.syncTeams()
+  }
+
+  /**
+   * Tüm takım feed'lerini eşitler. Gelen dosyaları dosya izleyici zaten
+   * görüyor; burada yalnız durum ve "yeni geldi" sinyali üretilir.
+   */
+  async syncTeams(options: { onFocus?: boolean } = {}): Promise<void> {
+    await Promise.all(
+      activeTeams(this.#config).map(async (team) => {
+        if (this.#syncing.has(team.id)) return
+        const last = this.#sync.get(team.id)
+        if (options.onFocus && last && Date.now() - Date.parse(last.at) < FOCUS_SYNC_MIN_GAP_MS) return
+        await this.#runSync(team.id, 0)
+      }),
+    )
+  }
+
+  async #runSync(teamId: string, wait: number): Promise<void> {
+    const team = activeTeams(this.#config).find((item) => item.id === teamId)
+    if (!team) return
+    this.#syncing.add(teamId)
+    this.emit('status')
+    try {
+      const result = await syncTeam(team, { wait })
+      if (result.skipped) return
+      this.#sync.set(teamId, result)
+      // Kendi itiklerimiz değil, YALNIZ başkalarından gelenler "geldi" sayılır.
+      const arrived = result.arrived
+        .map((file) => path.basename(file, '.md'))
+        .filter((id) => this.#index.get(id)?.author !== team.author)
+      if (arrived.length > 0) this.emit('arrived', arrived)
+    } finally {
+      this.#syncing.delete(teamId)
+      this.emit('status')
+    }
+  }
+
+  /** Takım kaydına yazıldı: kısa bir gecikmeyle it (art arda yazımlar tek commit). */
+  #schedulePush(entry: Pick<Entry, 'sourceId'>): void {
+    const team = teamOfEntry(this.#config, entry)
+    if (!team) return
+    const existing = this.#pushTimers.get(team.id)
+    if (existing) clearTimeout(existing)
+    this.#pushTimers.set(
+      team.id,
+      setTimeout(() => {
+        this.#pushTimers.delete(team.id)
+        // Süren bir periyodik eşitleme yeni dosyayı kaçırmış olabilir; bekle.
+        void this.#runSync(team.id, 30_000)
+      }, PUSH_DEBOUNCE_MS),
+    )
   }
 
   async reindex(): Promise<void> {
@@ -232,10 +308,7 @@ export class Library extends EventEmitter {
       return
     }
 
-    const outcome = await readEntryFile(file, {
-      sourceId: source.id,
-      readOnly: source.readOnly,
-    }).catch(() => null)
+    const outcome = await readEntryFile(file, entryOptions(source)).catch(() => null)
     if (!outcome) return
     if (!outcome.ok) {
       this.#failures = [...this.#failures.filter((f) => f.path !== file), outcome.failure]
@@ -303,14 +376,35 @@ export class Library extends EventEmitter {
       tracked: this.#tracking.size,
       orphanTracking: this.#orphans,
       collisions: this.#collisions,
+      teams: (this.#config.teams ?? []).map((team): TeamStatus => {
+        const last = this.#sync.get(team.id)
+        return {
+          id: team.id,
+          label: team.label,
+          author: team.author,
+          root: team.root,
+          enabled: team.enabled !== false,
+          syncing: this.#syncing.has(team.id),
+          lastSync: last
+            ? {
+                at: last.at,
+                ok: last.ok,
+                error: last.error,
+                blocked: last.blocked,
+                pending: (last.ahead ?? 0) > 0,
+              }
+            : undefined,
+        }
+      }),
     }
   }
 
   async create(draft: EntryDraft): Promise<Entry> {
-    const entry = await createEntry(this.#config.vaultRoot, draft)
+    const { entry } = await createRoutedEntry(this.#config, draft)
     this.#index.upsert(entry)
     this.#pathToId.set(entry.path, entry.id)
     this.emit('changed', entry.id)
+    this.#schedulePush(entry)
     return entry
   }
 
@@ -349,13 +443,14 @@ export class Library extends EventEmitter {
       ...next,
       body,
       path: absPath,
-      sourceId: 'vault',
+      sourceId: current.sourceId,
       readOnly: false,
       outboundLinks: current.outboundLinks,
     }
     this.#index.upsert(entry)
     this.#pathToId.set(absPath, id)
     this.emit('changed', id)
+    this.#schedulePush(entry)
     return { ok: true, entry }
   }
 
@@ -385,6 +480,7 @@ export class Library extends EventEmitter {
       this.#index.upsert(entry)
       this.#pathToId.set(outcome.path, id)
       this.emit('changed', id)
+      this.#schedulePush(entry)
       return entry
     }
 
@@ -400,6 +496,7 @@ export class Library extends EventEmitter {
     this.#index.remove(id)
     this.#pathToId.delete(entry.path)
     this.emit('changed')
+    this.#schedulePush(entry)
     return true
   }
 
@@ -413,6 +510,10 @@ export class Library extends EventEmitter {
   async dispose(): Promise<void> {
     for (const timer of this.#pending.values()) clearTimeout(timer)
     this.#pending.clear()
+    if (this.#syncTimer) clearInterval(this.#syncTimer)
+    this.#syncTimer = null
+    for (const timer of this.#pushTimers.values()) clearTimeout(timer)
+    this.#pushTimers.clear()
     await this.#watcher?.close()
     this.#watcher = null
   }

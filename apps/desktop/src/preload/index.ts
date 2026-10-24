@@ -16,6 +16,7 @@ import type {
   EntryDetail,
   LibraryStatus,
   SaveOutcome,
+  TeamActionOutcome,
 } from '../shared/ipc.js'
 
 function subscribe(channel: string, callback: (...args: unknown[]) => void): () => void {
@@ -49,6 +50,14 @@ const api: DevlogApi = {
   onChanged: (callback) =>
     subscribe(CHANNELS.changed, (id) => callback(typeof id === 'string' ? id : undefined)),
   onStatusChanged: (callback) => subscribe(CHANNELS.statusChanged, () => callback()),
+  sync: () => ipcRenderer.invoke(CHANNELS.sync) as Promise<void>,
+  joinTeam: (request) =>
+    ipcRenderer.invoke(CHANNELS.joinTeam, request) as Promise<TeamActionOutcome>,
+  leaveTeam: (id) => ipcRenderer.invoke(CHANNELS.leaveTeam, id) as Promise<TeamActionOutcome>,
+  onArrived: (callback) =>
+    subscribe(CHANNELS.arrived, (ids) => {
+      if (Array.isArray(ids)) callback(ids.filter((id): id is string => typeof id === 'string'))
+    }),
   onFocusEntry: (callback) =>
     subscribe(CHANNELS.focusEntry, (id) => {
       if (typeof id === 'string') callback(id)
